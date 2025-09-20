@@ -785,6 +785,38 @@ def get_pusher_stats():
         print(f"Fejl ved hentning af pusher stats: {e}")
         return []
 
+def get_current_pusher_stats(guild):
+    """Get pusher stats kun for folk med pusher rollen lige nu"""
+    try:
+        pusher_role = discord.utils.get(guild.roles, id=PUSHER_ROLLE_ID)
+        if not pusher_role:
+            return []
+        
+        # Hent alle pusher IDs der har rollen lige nu
+        current_pusher_ids = [member.id for member in pusher_role.members]
+        
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        # Kun hent stats for folk der stadig har pusher rollen
+        if current_pusher_ids:
+            placeholders = ','.join(['?' for _ in current_pusher_ids])
+            cursor.execute(f"""
+                SELECT pusher_id, pusher_navn, total_jobs 
+                FROM pusher_stats 
+                WHERE pusher_id IN ({placeholders})
+                ORDER BY total_jobs DESC
+            """, current_pusher_ids)
+            stats = cursor.fetchall()
+        else:
+            stats = []
+        
+        conn.close()
+        return stats
+    except Exception as e:
+        print(f"Fejl ved hentning af aktuelle pusher stats: {e}")
+        return []
+
 def get_recent_completed_jobs(limit=5):
     """Get recent completed jobs from database"""
     try:
@@ -801,6 +833,38 @@ def get_recent_completed_jobs(limit=5):
         return jobs
     except Exception as e:
         print(f"Fejl ved hentning af seneste jobs: {e}")
+        return []
+
+def get_recent_completed_jobs_current_pushers(guild, limit=5):
+    """Get recent completed jobs kun fra folk der stadig har pusher rollen"""
+    try:
+        pusher_role = discord.utils.get(guild.roles, id=PUSHER_ROLLE_ID)
+        if not pusher_role:
+            return []
+        
+        # Hent alle pusher IDs der har rollen lige nu
+        current_pusher_ids = [member.id for member in pusher_role.members]
+        
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        if current_pusher_ids:
+            placeholders = ','.join(['?' for _ in current_pusher_ids])
+            cursor.execute(f"""
+                SELECT titel, pusher_navn, completed_tid, job_number
+                FROM completed_jobs 
+                WHERE pusher_id IN ({placeholders})
+                ORDER BY completed_tid DESC 
+                LIMIT ?
+            """, current_pusher_ids + [limit])
+            jobs = cursor.fetchall()
+        else:
+            jobs = []
+        
+        conn.close()
+        return jobs
+    except Exception as e:
+        print(f"Fejl ved hentning af seneste jobs fra aktuelle pusherne: {e}")
         return []
 
 async def ensure_all_pushers_in_stats(guild):
@@ -847,8 +911,8 @@ async def send_pusher_stats_embed(kanal):
         color=0x00FF00
     )
     
-    # Get pusher stats from database (nu med alle pusherne)
-    pusher_stats = get_pusher_stats()
+    # Get pusher stats kun for folk med pusher rollen lige nu
+    pusher_stats = get_current_pusher_stats(kanal.guild)
     
     if pusher_stats:
         # Create rankings text med mørkeblå felt stil
@@ -871,8 +935,8 @@ async def send_pusher_stats_embed(kanal):
             inline=False
         )
     
-    # Recent completed jobs med mørkeblå felt stil
-    recent_jobs = get_recent_completed_jobs(5)
+    # Recent completed jobs med mørkeblå felt stil (kun fra aktuelle pusherne)
+    recent_jobs = get_recent_completed_jobs_current_pushers(kanal.guild, 5)
     if recent_jobs:
         recent_text = "```\n"
         for titel, pusher_navn, completed_tid, job_number in recent_jobs:

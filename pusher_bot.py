@@ -370,6 +370,49 @@ async def on_ready():
     await setup_medlem_kanal()
     await setup_pusher_stats_kanal()
 
+@bot.event
+async def on_member_update(before, after):
+    """Opdater pusher stats når medlemmer får/mister pusher rollen"""
+    # Tjek om pusher rollen er ændret
+    pusher_role_id = PUSHER_ROLLE_ID
+    
+    before_has_role = any(role.id == pusher_role_id for role in before.roles)
+    after_has_role = any(role.id == pusher_role_id for role in after.roles)
+    
+    # Hvis pusher rollen er ændret
+    if before_has_role != after_has_role:
+        print(f"🔄 Pusher rolle ændret for {after.display_name}: {before_has_role} → {after_has_role}")
+        
+        # Opdater stats kanal automatisk
+        stats_kanal = bot.get_channel(PUSHER_STATS_KANAL_ID)
+        if stats_kanal:
+            await update_pusher_stats_embed(stats_kanal)
+            print(f"✅ Opdaterede pusher stats efter rolle ændring for {after.display_name}")
+
+@bot.event
+async def on_member_remove(member):
+    """Opdater pusher stats når et medlem forlader serveren"""
+    # Tjek om medlemmet havde pusher rollen
+    had_pusher_role = any(role.id == PUSHER_ROLLE_ID for role in member.roles)
+    
+    if had_pusher_role:
+        print(f"👋 Pusher {member.display_name} forlod serveren")
+        
+        # Opdater stats kanal automatisk
+        stats_kanal = bot.get_channel(PUSHER_STATS_KANAL_ID)
+        if stats_kanal:
+            # Vent lidt så Discord opdaterer rolle listen
+            await asyncio.sleep(1)
+            await update_pusher_stats_embed(stats_kanal)
+            print(f"✅ Opdaterede pusher stats efter {member.display_name} forlod serveren")
+
+@bot.event
+async def on_member_join(member):
+    """Potentielt opdater pusher stats hvis ny medlem får pusher rolle hurtigt"""
+    # Denne event trigger ikke stats opdatering med det samme,
+    # men on_member_update vil fange det når de får rollen
+    pass
+
 async def setup_pusher_kanal():
     """Setup pusher kanal med job oversigt"""
     kanal = bot.get_channel(PUSHER_KANAL_ID)
@@ -868,17 +911,19 @@ def get_recent_completed_jobs_current_pushers(guild, limit=5):
         return []
 
 async def ensure_all_pushers_in_stats(guild):
-    """Sørg for at alle med pusher rollen er i statistik tabellen"""
+    """Sørg for at alle med pusher rollen er i statistik tabellen og fjern gamle"""
     try:
         pusher_role = discord.utils.get(guild.roles, id=PUSHER_ROLLE_ID)
         if not pusher_role:
             print(f"⚠️ Pusher rolle med ID {PUSHER_ROLLE_ID} ikke fundet.")
             return
         
+        current_pusher_ids = [member.id for member in pusher_role.members]
+        
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         
-        # Indsæt alle pusherne i tabellen hvis de ikke allerede er der
+        # Indsæt alle aktuelle pusherne i tabellen hvis de ikke allerede er der
         for member in pusher_role.members:
             cursor.execute("""
                 INSERT OR IGNORE INTO pusher_stats (pusher_id, pusher_navn, total_jobs)
@@ -893,12 +938,22 @@ async def ensure_all_pushers_in_stats(guild):
                 WHERE pusher_id = ?
             """, (member.display_name, member.id))
         
+        # VIGTIGT: Marker folk uden pusher rolle som inaktive
+        # Vi sletter ikke deres data, men de vises ikke i listen
+        if current_pusher_ids:
+            placeholders = ','.join(['?' for _ in current_pusher_ids])
+            cursor.execute(f"""
+                UPDATE pusher_stats 
+                SET last_updated = CURRENT_TIMESTAMP
+                WHERE pusher_id NOT IN ({placeholders})
+            """, current_pusher_ids)
+        
         conn.commit()
         conn.close()
-        print(f"✅ Opdaterede pusher stats for {len(pusher_role.members)} pusherne")
+        print(f"✅ Real-time opdaterede pusher stats for {len(pusher_role.members)} aktive pusherne")
         
     except Exception as e:
-        print(f"Fejl ved opdatering af pusher stats: {e}")
+        print(f"Fejl ved real-time opdatering af pusher stats: {e}")
 
 async def send_pusher_stats_embed(kanal):
     """Send pusher statistik embed"""

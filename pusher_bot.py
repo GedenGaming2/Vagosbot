@@ -463,26 +463,77 @@ async def send_pusher_embed(kanal):
     
     # Permanente opgaver
     permanent_jobs = get_permanent_jobs()
-    permanent_text = "\n".join([f"• {job}" for job in permanent_jobs])
-    
-    # Permanent jobs embed
-    perm_embed = discord.Embed(
-        title="🔄 Permanente Opgaver",
-        description=f"```\n{permanent_text}\n```",
-        color=0x5865F2
-    )
     
     embed.add_field(
         name="🔄 Permanente Opgaver",
-        value="Se separat embed nedenfor",
+        value="Se nummererede permanente opgaver nedenfor",
         inline=False
     )
     
-    # Medlems opgaver med nummerering
+    # Medlems opgaver
     member_jobs = get_member_jobs()
+    embed.add_field(
+        name="📋 Medlems Opgaver",
+        value="Se medlems opgaver nedenfor" if member_jobs else "```\nIngen opgaver lige nu\n```",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="ℹ️ Information",
+        value="Tryk på nummerknapperne for at tage opgaver. Permanente opgaver opretter admin-pusher kanal.",
+        inline=False
+    )
+    
+    embed.set_footer(text="Vagos Pusher System v1.0")
+    embed.timestamp = datetime.now()
+    
+    # Send main embed (denne gemmes og opdateres ikke)
+    main_msg = await kanal.send(embed=embed)
+    
+    # Send permanent jobs med knapper
+    await send_permanent_jobs_section(kanal, permanent_jobs)
+    
+    # Send member jobs (opdeles hvis nødvendigt)
     if member_jobs:
+        await send_member_jobs_sections(kanal, member_jobs)
+    
+    return main_msg
+
+async def send_permanent_jobs_section(kanal, permanent_jobs):
+    """Send permanent jobs med nummererede knapper"""
+    if not permanent_jobs:
+        return
+    
+    # Opret permanent jobs tekst med numre
+    perm_text = ""
+    for i, job in enumerate(permanent_jobs, 1):
+        perm_text += f"**#{i}** {job}\n"
+    
+    perm_embed = discord.Embed(
+        title="🔄 Permanente Opgaver",
+        description=perm_text,
+        color=0x5865F2
+    )
+    
+    await kanal.send(embed=perm_embed)
+    
+    # Opret knapper for permanente jobs
+    perm_view = await create_permanent_job_buttons_view(permanent_jobs)
+    if perm_view.children:
+        await kanal.send("**Permanente opgaver:**", view=perm_view)
+
+async def send_member_jobs_sections(kanal, member_jobs):
+    """Send member jobs opdelt i sektioner af max 8"""
+    JOBS_PER_SECTION = 8
+    
+    # Opdel jobs i grupper af 8
+    for i in range(0, len(member_jobs), JOBS_PER_SECTION):
+        section_jobs = member_jobs[i:i + JOBS_PER_SECTION]
+        section_number = (i // JOBS_PER_SECTION) + 1
+        
+        # Opret embed for denne sektion
         member_jobs_text = ""
-        for job in member_jobs:
+        for job in section_jobs:
             status_emoji = "🟢" if job["status"] == "ledig" else "🔴"
             job_number = job.get("job_number", "?")
             member_jobs_text += f"**#{job_number}** {status_emoji} **{job['titel']}**\n"
@@ -493,66 +544,44 @@ async def send_pusher_embed(kanal):
                 member_jobs_text += f"       🎯 Pusher: {job['pusher_navn']}\n"
             member_jobs_text += "\n"
         
-        # Member jobs embed  
+        # Member jobs embed for denne sektion
+        title = f"📋 Medlems Opgaver (Del {section_number})" if len(member_jobs) > JOBS_PER_SECTION else "📋 Medlems Opgaver"
         member_embed = discord.Embed(
-            title="📋 Medlems Opgaver",
+            title=title,
             description=member_jobs_text,
             color=0x57F287
         )
         
-        embed.add_field(
-            name="📋 Medlems Opgaver",
-            value="Se separat embed nedenfor",
-            inline=False
-        )
-    else:
-        embed.add_field(
-            name="📋 Medlems Opgaver",
-            value="```\nIngen opgaver lige nu\n```",
-            inline=False
-        )
-    
-    embed.add_field(
-        name="ℹ️ Information",
-        value="Tryk på nummerknapperne nedenfor for at tage en opgave. Du får adgang til en privat kanal med medlemmet.",
-        inline=False
-    )
-    
-    embed.set_footer(text="Vagos Pusher System v1.0")
-    embed.timestamp = datetime.now()
-    
-    # Send main embed
-    await kanal.send(embed=embed)
-    
-    # Send permanent jobs embed
-    await kanal.send(embed=perm_embed)
-    
-    # Send member jobs embed if any exist
-    if member_jobs:
         await kanal.send(embed=member_embed)
-    
-    # Send buttons
-    view = await create_job_buttons_view()
-    if view.children:  # Only send if there are buttons
-        await kanal.send("**Tryk på nummer for at tage job:**", view=view)
+        
+        # Opret knapper for denne sektion
+        section_view = await create_member_job_buttons_view(section_jobs)
+        if section_view.children:
+            section_label = f"Del {section_number}" if len(member_jobs) > JOBS_PER_SECTION else "opgaver"
+            await kanal.send(f"**Medlems {section_label}:**", view=section_view)
 
-async def update_pusher_embed(kanal):
-    """Opdater pusher embed"""
-    # Slet gamle beskeder og send ny
-    try:
-        await kanal.purge()
-        await send_pusher_embed(kanal)
-    except Exception as e:
-        print(f"Fejl ved opdatering af pusher embed: {e}")
-
-async def create_job_buttons_view():
-    """Opret view med nummerknapper for alle ledige jobs"""
+async def create_permanent_job_buttons_view(permanent_jobs):
+    """Opret view med knapper for permanente jobs"""
     view = View(timeout=None)
     
-    # Tilføj knapper for medlems opgaver
-    member_jobs = get_member_jobs()
-    for job in member_jobs:
-        if job["status"] == "ledig":
+    for i, job in enumerate(permanent_jobs, 1):
+        if len(view.children) >= 25:  # Discord limit
+            break
+        button = Button(
+            label=f"#{i}",
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"permanent_job_{i}"
+        )
+        view.add_item(button)
+    
+    return view
+
+async def create_member_job_buttons_view(jobs):
+    """Opret view med knapper for member jobs"""
+    view = View(timeout=None)
+    
+    for job in jobs:
+        if job["status"] == "ledig" and len(view.children) < 25:
             job_number = job.get("job_number", "?")
             button = Button(
                 label=f"#{job_number}",
@@ -562,6 +591,43 @@ async def create_job_buttons_view():
             view.add_item(button)
     
     return view
+
+async def update_pusher_embed(kanal):
+    """Opdater pusher embed - bevar main info besked"""
+    try:
+        # Hent alle beskeder i kanalen
+        messages = []
+        async for message in kanal.history(limit=50):
+            if message.author == bot.user:
+                messages.append(message)
+        
+        # Bevar første besked (main info), slet resten
+        if len(messages) > 1:
+            # Slet alle beskeder undtagen den første (nyeste er først i listen)
+            for message in messages[:-1]:  # Alle undtagen den sidste (ældste/første)
+                try:
+                    await message.delete()
+                except:
+                    pass
+        
+        # Send opdaterede sektioner
+        permanent_jobs = get_permanent_jobs()
+        member_jobs = get_member_jobs()
+        
+        await send_permanent_jobs_section(kanal, permanent_jobs)
+        
+        if member_jobs:
+            await send_member_jobs_sections(kanal, member_jobs)
+        
+    except Exception as e:
+        print(f"Fejl ved opdatering af pusher embed: {e}")
+        # Fallback: purge og send helt nyt
+        try:
+            await kanal.purge()
+            await send_pusher_embed(kanal)
+        except Exception as e2:
+            print(f"Fallback fejl: {e2}")
+
 
 async def send_medlem_embed(kanal):
     """Send medlem embed med knap til at oprette opgaver"""
@@ -815,6 +881,124 @@ async def on_interaction(interaction):
         
         if custom_id.startswith("take_job_"):
             await handle_take_job(interaction, custom_id)
+        elif custom_id.startswith("permanent_job_"):
+            await handle_permanent_job(interaction, custom_id)
+
+async def handle_permanent_job(interaction, custom_id):
+    """Handle når en pusher tager en permanent opgave"""
+    job_number = int(custom_id.replace("permanent_job_", ""))
+    
+    # Hent permanent jobs
+    permanent_jobs = get_permanent_jobs()
+    
+    if job_number < 1 or job_number > len(permanent_jobs):
+        await interaction.response.send_message("⛔ Ugyldig opgave nummer!", ephemeral=True)
+        return
+    
+    job_title = permanent_jobs[job_number - 1]
+    pusher = interaction.user
+    
+    # Tjek om brugeren har admin rolle for at finde admin
+    admin_user = None
+    if tjek_admin_rolle(pusher):
+        await interaction.response.send_message("⛔ Admins kan ikke tage permanente opgaver!", ephemeral=True)
+        return
+    
+    # Find en admin til at koordinere med
+    guild = interaction.guild
+    admin_role = discord.utils.get(guild.roles, id=ADMIN_ROLLE_ID)
+    
+    if not admin_role or not admin_role.members:
+        await interaction.response.send_message("⛔ Ingen admins tilgængelige!", ephemeral=True)
+        return
+    
+    # Tag første tilgængelige admin
+    admin_user = admin_role.members[0]
+    
+    # Opret privat kanal
+    try:
+        kategori = discord.utils.get(guild.categories, id=PRIVAT_KATEGORI_ID)
+        
+        if not kategori:
+            await interaction.response.send_message("⛔ Kunne ikke finde kategorien til private kanaler!", ephemeral=True)
+            return
+        
+        # Opret kanal navn
+        kanal_navn = f"perm-{job_number}-{pusher.display_name[:10]}"
+        
+        # Opret kanalen
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(read_messages=False),
+            admin_user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+            pusher: discord.PermissionOverwrite(read_messages=True, send_messages=True)
+        }
+        
+        privat_kanal = await kategori.create_text_channel(
+            name=kanal_navn,
+            overwrites=overwrites
+        )
+        
+        # Send besked i den private kanal
+        perm_embed = discord.Embed(
+            title="🔄 Permanent Opgave Match!",
+            description=f"**{pusher.display_name}** vil arbejde på permanent opgave med **{admin_user.display_name}**",
+            color=0x5865F2
+        )
+        
+        perm_embed.add_field(
+            name="📋 Opgave",
+            value=f"**#{job_number}** {job_title}",
+            inline=False
+        )
+        
+        perm_embed.add_field(
+            name="👥 Deltagere",
+            value=f"**Pusher:** {pusher.mention}\n**Admin:** {admin_user.mention}",
+            inline=False
+        )
+        
+        perm_embed.add_field(
+            name="ℹ️ Information",
+            value="I kan nu koordinere arbejdet på denne permanente opgave. Kanalen slettes ikke automatisk.",
+            inline=False
+        )
+        
+        perm_embed.set_footer(text="Permanent Opgave Koordination")
+        
+        # Opret view med kun close knap (ingen complete da det er permanent)
+        perm_view = PermanentJobView(job_number, job_title)
+        
+        await privat_kanal.send(f"{admin_user.mention} {pusher.mention}", embed=perm_embed, view=perm_view)
+        
+        await interaction.response.send_message(f"✅ Permanent opgave taget! Privat kanal oprettet: {privat_kanal.mention}", ephemeral=True)
+        
+    except Exception as e:
+        print(f"Fejl ved oprettelse af permanent opgave kanal: {e}")
+        await interaction.response.send_message("⛔ Fejl ved oprettelse af privat kanal!", ephemeral=True)
+
+class PermanentJobView(View):
+    def __init__(self, job_number, job_title):
+        super().__init__(timeout=None)
+        self.job_number = job_number
+        self.job_title = job_title
+
+    @discord.ui.button(label="🔒 Luk Kanal", style=discord.ButtonStyle.danger)
+    async def close_channel(self, interaction: discord.Interaction, button: Button):
+        # Tjek om brugeren er admin eller pusher i kanalen
+        if not (tjek_admin_rolle(interaction.user) or 
+                any(role.id == ADMIN_ROLLE_ID for role in interaction.user.roles) or
+                interaction.channel.permissions_for(interaction.user).send_messages):
+            await interaction.response.send_message("⛔ Du har ikke tilladelse til at lukke denne kanal!", ephemeral=True)
+            return
+        
+        await interaction.response.send_message("🔒 Kanalen lukkes om 10 sekunder...", ephemeral=False)
+        
+        # Slet kanalen efter 10 sekunder
+        await asyncio.sleep(10)
+        try:
+            await interaction.channel.delete()
+        except:
+            pass
 
 async def handle_take_job(interaction, custom_id):
     """Handle når en pusher tager et job"""

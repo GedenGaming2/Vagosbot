@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord.ui import Button, View, Modal, TextInput, Select
 from datetime import datetime
 import json
@@ -21,6 +21,7 @@ if not TOKEN:
 # Discord intents
 intents = discord.Intents.default()
 intents.message_content = True
+intents.members = True  # Nødvendigt for member events
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -369,25 +370,41 @@ async def on_ready():
     await setup_pusher_kanal()
     await setup_medlem_kanal()
     await setup_pusher_stats_kanal()
+    
+    # Start periodisk check som backup
+    periodic_stats_check.start()
 
 @bot.event
 async def on_member_update(before, after):
     """Opdater pusher stats når medlemmer får/mister pusher rollen"""
-    # Tjek om pusher rollen er ændret
-    pusher_role_id = PUSHER_ROLLE_ID
-    
-    before_has_role = any(role.id == pusher_role_id for role in before.roles)
-    after_has_role = any(role.id == pusher_role_id for role in after.roles)
-    
-    # Hvis pusher rollen er ændret
-    if before_has_role != after_has_role:
-        print(f"🔄 Pusher rolle ændret for {after.display_name}: {before_has_role} → {after_has_role}")
+    try:
+        # Debug: Log alle rolle ændringer
+        print(f"🔍 Member update detected for {after.display_name}")
         
-        # Opdater stats kanal automatisk
-        stats_kanal = bot.get_channel(PUSHER_STATS_KANAL_ID)
-        if stats_kanal:
-            await update_pusher_stats_embed(stats_kanal)
-            print(f"✅ Opdaterede pusher stats efter rolle ændring for {after.display_name}")
+        # Tjek om pusher rollen er ændret
+        pusher_role_id = PUSHER_ROLLE_ID
+        
+        before_has_role = any(role.id == pusher_role_id for role in before.roles)
+        after_has_role = any(role.id == pusher_role_id for role in after.roles)
+        
+        print(f"🔍 Pusher rolle check: {before_has_role} → {after_has_role}")
+        
+        # Hvis pusher rollen er ændret
+        if before_has_role != after_has_role:
+            print(f"🔄 PUSHER ROLLE ÆNDRET for {after.display_name}: {before_has_role} → {after_has_role}")
+            
+            # Vent lidt for at sikre Discord har opdateret
+            await asyncio.sleep(2)
+            
+            # Opdater stats kanal automatisk
+            stats_kanal = bot.get_channel(PUSHER_STATS_KANAL_ID)
+            if stats_kanal:
+                await update_pusher_stats_embed(stats_kanal)
+                print(f"✅ OPDATEREDE pusher stats efter rolle ændring for {after.display_name}")
+            else:
+                print(f"⚠️ Stats kanal ikke fundet!")
+    except Exception as e:
+        print(f"❌ Fejl i on_member_update: {e}")
 
 @bot.event
 async def on_member_remove(member):
@@ -1516,6 +1533,24 @@ async def pusherbot_admin(ctx, action=None, subaction=None):
         await ctx.send("⛔ Ukendt subkommando! Brug `add`, `edit`, eller `remove`")
 
 @bot.command()
+async def refresh_stats(ctx):
+    """Genopfrisk pusher statistikker manuelt (admin kun)"""
+    if not tjek_admin_rolle(ctx.author):
+        await ctx.send("⛔ Du har ikke tilladelse til at opdatere stats!")
+        return
+    
+    try:
+        stats_kanal = bot.get_channel(PUSHER_STATS_KANAL_ID)
+        if stats_kanal:
+            await update_pusher_stats_embed(stats_kanal)
+            await ctx.send("✅ Pusher statistikker er blevet opdateret!")
+        else:
+            await ctx.send("⛔ Stats kanal ikke fundet!")
+    except Exception as e:
+        await ctx.send(f"⛔ Fejl ved opdatering: {e}")
+        print(f"Fejl ved manual stats refresh: {e}")
+
+@bot.command()
 async def admin_reset(ctx):
     """Reset alle jobs (kun til admin)"""
     if not tjek_admin_rolle(ctx.author):
@@ -1545,6 +1580,22 @@ async def admin_reset(ctx):
     except Exception as e:
         await ctx.send(f"⛔ Fejl ved nulstilling: {e}")
         print(f"Fejl ved admin reset: {e}")
+
+@tasks.loop(minutes=5)  # Tjek hver 5. minut som backup
+async def periodic_stats_check():
+    """Periodisk tjek af pusher stats som backup til events"""
+    try:
+        stats_kanal = bot.get_channel(PUSHER_STATS_KANAL_ID)
+        if stats_kanal:
+            # Stille opdatering uden at spamme logs
+            await update_pusher_stats_embed(stats_kanal)
+            print("🔄 Periodisk stats check udført")
+    except Exception as e:
+        print(f"Fejl ved periodisk stats check: {e}")
+
+@periodic_stats_check.before_loop
+async def before_periodic_check():
+    await bot.wait_until_ready()
 
 bot.run(TOKEN)
 

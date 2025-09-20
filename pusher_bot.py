@@ -28,6 +28,7 @@ PUSHER_KANAL_ID = 1419000630927691787
 MEDLEM_KANAL_ID = 1419003264690556999
 PRIVAT_KATEGORI_ID = 1419003473386799267
 ADMIN_ROLLE_ID = 1418989096306741299
+PUSHER_STATS_KANAL_ID = 1419012741007409314
 
 # Data storage
 JOBS_FIL = "jobs_data.json"
@@ -43,6 +44,8 @@ jobs_data = {
     ],
     "member_jobs": [],
     "active_jobs": {},
+    "completed_jobs": [],
+    "pusher_stats": {},
     "job_counter": 1
 }
 
@@ -74,6 +77,7 @@ async def on_ready():
     # Setup kanaler
     await setup_pusher_kanal()
     await setup_medlem_kanal()
+    await setup_pusher_stats_kanal()
 
 async def setup_pusher_kanal():
     """Setup pusher kanal med job oversigt"""
@@ -298,6 +302,194 @@ async def send_medlem_embed(kanal):
     view = MedlemView()
     await kanal.send(embed=embed, view=view)
 
+async def setup_pusher_stats_kanal():
+    """Setup pusher statistik kanal"""
+    kanal = bot.get_channel(PUSHER_STATS_KANAL_ID)
+    if kanal is None:
+        print(f"⚠️ Pusher stats kanal med ID {PUSHER_STATS_KANAL_ID} ikke fundet.")
+        return
+    
+    try:
+        # Clear channel
+        await kanal.purge()
+        print(f"🧹 Pusher stats kanal {kanal.name} er ryddet.")
+    except Exception as e:
+        print(f"❌ Fejl under rydning af pusher stats kanal: {e}")
+    
+    # Send stats embed
+    await send_pusher_stats_embed(kanal)
+
+async def send_pusher_stats_embed(kanal):
+    """Send pusher statistik embed"""
+    embed = discord.Embed(
+        title="📊 Pusher Statistikker",
+        description="**Oversigt over alle pusherne og deres færdiggjorte jobs**",
+        color=0x00FF00
+    )
+    
+    # Hent alle med pusher rolle
+    guild = kanal.guild
+    pusher_rolle = None
+    
+    # Find pusher rolle (du skal tilføje pusher rolle ID her)
+    # For nu bruger vi alle medlemmer som eksempel
+    if not jobs_data["pusher_stats"]:
+        embed.add_field(
+            name="📋 Status",
+            value="```\nIngen færdiggjorte jobs endnu\n```",
+            inline=False
+        )
+    else:
+        stats_text = ""
+        for pusher_id, stats in jobs_data["pusher_stats"].items():
+            try:
+                pusher = await bot.fetch_user(int(pusher_id))
+                completed_count = len(stats.get("completed_jobs", []))
+                stats_text += f"👤 **{pusher.display_name}**: {completed_count} jobs\n"
+            except:
+                continue
+        
+        if stats_text:
+            embed.add_field(
+                name="🏆 Pusher Rankings",
+                value=stats_text,
+                inline=False
+            )
+    
+    # Seneste færdiggjorte jobs
+    if jobs_data["completed_jobs"]:
+        recent_jobs = jobs_data["completed_jobs"][-5:]  # Sidste 5 jobs
+        recent_text = ""
+        for job in reversed(recent_jobs):
+            recent_text += f"✅ **{job['titel']}** - {job['pusher_navn']} ({job['completed_tid'][:10]})\n"
+        
+        embed.add_field(
+            name="🕒 Seneste Færdiggjorte Jobs",
+            value=recent_text if recent_text else "Ingen endnu",
+            inline=False
+        )
+    
+    embed.set_footer(text="Vagos Pusher Stats v1.0")
+    embed.timestamp = datetime.now()
+    
+    await kanal.send(embed=embed)
+
+class JobControlView(View):
+    def __init__(self, job_id):
+        super().__init__(timeout=None)
+        self.job_id = job_id
+
+    @discord.ui.button(label="❌ Cancel Job", style=discord.ButtonStyle.danger)
+    async def cancel_job(self, interaction: discord.Interaction, button: Button):
+        # Find jobbet
+        job = None
+        for j in jobs_data["member_jobs"]:
+            if j["id"] == self.job_id:
+                job = j
+                break
+        
+        if not job:
+            await interaction.response.send_message("⛔ Dette job eksisterer ikke længere!", ephemeral=True)
+            return
+        
+        # Tjek om brugeren er medlem eller pusher på jobbet
+        if interaction.user.id not in [job["oprettet_af"], job.get("pusher_id")]:
+            await interaction.response.send_message("⛔ Du kan kun cancellere jobs du er involveret i!", ephemeral=True)
+            return
+        
+        # Cancel jobbet
+        job["status"] = "ledig"
+        job["pusher_id"] = None
+        job["pusher_navn"] = None
+        if "taget_tid" in job:
+            del job["taget_tid"]
+        
+        save_jobs_data()
+        
+        await interaction.response.send_message("✅ Jobbet er blevet cancelled og er nu ledigt igen!", ephemeral=False)
+        
+        # Opdater pusher kanal
+        pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
+        if pusher_kanal:
+            await update_pusher_embed(pusher_kanal)
+        
+        # Slet den private kanal efter 10 sekunder
+        await asyncio.sleep(10)
+        try:
+            await interaction.channel.delete()
+        except:
+            pass
+
+    @discord.ui.button(label="✅ Job Færdigt", style=discord.ButtonStyle.success)
+    async def complete_job(self, interaction: discord.Interaction, button: Button):
+        # Find jobbet
+        job = None
+        job_index = None
+        for i, j in enumerate(jobs_data["member_jobs"]):
+            if j["id"] == self.job_id:
+                job = j
+                job_index = i
+                break
+        
+        if not job:
+            await interaction.response.send_message("⛔ Dette job eksisterer ikke længere!", ephemeral=True)
+            return
+        
+        # Tjek om brugeren er pusher på jobbet
+        if interaction.user.id != job.get("pusher_id"):
+            await interaction.response.send_message("⛔ Kun pusheren kan markere jobbet som færdigt!", ephemeral=True)
+            return
+        
+        # Marker job som færdigt
+        job["status"] = "færdigt"
+        job["completed_tid"] = datetime.now().isoformat()
+        
+        # Flyt til completed jobs
+        jobs_data["completed_jobs"].append(job.copy())
+        
+        # Opdater pusher stats
+        pusher_id = str(job["pusher_id"])
+        if pusher_id not in jobs_data["pusher_stats"]:
+            jobs_data["pusher_stats"][pusher_id] = {"completed_jobs": []}
+        
+        jobs_data["pusher_stats"][pusher_id]["completed_jobs"].append({
+            "job_id": job["id"],
+            "titel": job["titel"],
+            "completed_tid": job["completed_tid"],
+            "medlem_navn": job["oprettet_navn"]
+        })
+        
+        # Fjern fra member_jobs
+        jobs_data["member_jobs"].pop(job_index)
+        
+        save_jobs_data()
+        
+        await interaction.response.send_message("🎉 Jobbet er markeret som færdigt! Godt arbejde!", ephemeral=False)
+        
+        # Opdater pusher kanal og stats
+        pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
+        if pusher_kanal:
+            await update_pusher_embed(pusher_kanal)
+        
+        stats_kanal = bot.get_channel(PUSHER_STATS_KANAL_ID)
+        if stats_kanal:
+            await update_pusher_stats_embed(stats_kanal)
+        
+        # Slet den private kanal efter 10 sekunder
+        await asyncio.sleep(10)
+        try:
+            await interaction.channel.delete()
+        except:
+            pass
+
+async def update_pusher_stats_embed(kanal):
+    """Opdater pusher stats embed"""
+    try:
+        await kanal.purge()
+        await send_pusher_stats_embed(kanal)
+    except Exception as e:
+        print(f"Fejl ved opdatering af pusher stats embed: {e}")
+
 @bot.event
 async def on_interaction(interaction):
     """Handle button interactions"""
@@ -387,7 +579,10 @@ async def handle_take_job(interaction, custom_id):
         
         job_embed.set_footer(text="I kan nu koordinere jeres samarbejde her!")
         
-        await privat_kanal.send(f"{medlem.mention} {pusher.mention}", embed=job_embed)
+        # Tilføj job kontrol knapper
+        control_view = JobControlView(job_id)
+        
+        await privat_kanal.send(f"{medlem.mention} {pusher.mention}", embed=job_embed, view=control_view)
         
         # Gem kanal ID til jobbet
         job["privat_kanal_id"] = privat_kanal.id
@@ -606,12 +801,15 @@ async def admin_reset(ctx):
         
     jobs_data["member_jobs"] = []
     jobs_data["active_jobs"] = {}
+    jobs_data["completed_jobs"] = []
+    jobs_data["pusher_stats"] = {}
     save_jobs_data()
     
     # Opdater kanaler
     await setup_pusher_kanal()
     await setup_medlem_kanal()
+    await setup_pusher_stats_kanal()
     
-    await ctx.send("✅ Alle jobs er blevet nulstillet!")
+    await ctx.send("✅ Alle jobs og statistikker er blevet nulstillet!")
 
 bot.run(TOKEN)

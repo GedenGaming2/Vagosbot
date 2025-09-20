@@ -31,6 +31,7 @@ MEDLEM_KANAL_ID = 1419003264690556999
 PRIVAT_KATEGORI_ID = 1419003473386799267
 ADMIN_ROLLE_ID = 1418989096306741299
 PUSHER_STATS_KANAL_ID = 1419012741007409314
+PUSHER_ROLLE_ID = 1419000261141332059
 
 # Database setup
 DATA_DIR = Path("/data") if Path("/data").exists() else Path(".")
@@ -802,82 +803,102 @@ def get_recent_completed_jobs(limit=5):
         print(f"Fejl ved hentning af seneste jobs: {e}")
         return []
 
+async def ensure_all_pushers_in_stats(guild):
+    """Sørg for at alle med pusher rollen er i statistik tabellen"""
+    try:
+        pusher_role = discord.utils.get(guild.roles, id=PUSHER_ROLLE_ID)
+        if not pusher_role:
+            print(f"⚠️ Pusher rolle med ID {PUSHER_ROLLE_ID} ikke fundet.")
+            return
+        
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        # Indsæt alle pusherne i tabellen hvis de ikke allerede er der
+        for member in pusher_role.members:
+            cursor.execute("""
+                INSERT OR IGNORE INTO pusher_stats (pusher_id, pusher_navn, total_jobs)
+                VALUES (?, ?, 0)
+            """, (member.id, member.display_name))
+        
+        # Opdater navne for eksisterende pusherne
+        for member in pusher_role.members:
+            cursor.execute("""
+                UPDATE pusher_stats 
+                SET pusher_navn = ?, last_updated = CURRENT_TIMESTAMP
+                WHERE pusher_id = ?
+            """, (member.display_name, member.id))
+        
+        conn.commit()
+        conn.close()
+        print(f"✅ Opdaterede pusher stats for {len(pusher_role.members)} pusherne")
+        
+    except Exception as e:
+        print(f"Fejl ved opdatering af pusher stats: {e}")
+
 async def send_pusher_stats_embed(kanal):
     """Send pusher statistik embed"""
+    # Sørg for alle pusherne er i databasen
+    await ensure_all_pushers_in_stats(kanal.guild)
+    
     embed = discord.Embed(
         title="📊 Pusher Statistikker",
         description="**Oversigt over alle pusherne og deres færdiggjorte jobs**",
         color=0x00FF00
     )
     
-    # Get pusher stats from database
+    # Get pusher stats from database (nu med alle pusherne)
     pusher_stats = get_pusher_stats()
     
-    if not pusher_stats:
-        embed.add_field(
-            name="📋 Status",
-            value="```\nIngen færdiggjorte jobs endnu\n```",
-            inline=False
-        )
-    else:
-        # Create rankings embed
-        rankings_text = ""
+    if pusher_stats:
+        # Create rankings text med mørkeblå felt stil
+        rankings_text = "```\n"
         for i, (pusher_id, pusher_navn, total_jobs) in enumerate(pusher_stats, 1):
-            medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else "🏅"
-            rankings_text += f"{medal} **{pusher_navn}**: {total_jobs} jobs\n"
-        
-        rankings_embed = discord.Embed(
-            title="🏆 Pusher Rankings",
-            description=rankings_text,
-            color=0xFFD700
-        )
+            # Pad navnene så de er aligned
+            navn_padded = pusher_navn[:20].ljust(20)
+            rankings_text += f"{i:2d}. {navn_padded} {total_jobs:3d} jobs\n"
+        rankings_text += "```"
         
         embed.add_field(
             name="🏆 Pusher Rankings",
-            value="Se separat embed nedenfor",
+            value=rankings_text,
+            inline=False
+        )
+    else:
+        embed.add_field(
+            name="🏆 Pusher Rankings",
+            value="```\nIngen pusherne fundet\n```",
             inline=False
         )
     
-    # Recent completed jobs
+    # Recent completed jobs med mørkeblå felt stil
     recent_jobs = get_recent_completed_jobs(5)
     if recent_jobs:
-        recent_text = ""
+        recent_text = "```\n"
         for titel, pusher_navn, completed_tid, job_number in recent_jobs:
             date_str = completed_tid[:10] if completed_tid else "?"
-            recent_text += f"✅ **#{job_number} {titel}**\n"
-            recent_text += f"    🎯 {pusher_navn} ({date_str})\n\n"
-        
-        recent_embed = discord.Embed(
-            title="🕒 Seneste Færdiggjorte Jobs",
-            description=recent_text,
-            color=0x57F287
-        )
+            titel_short = titel[:25] + "..." if len(titel) > 25 else titel
+            recent_text += f"#{job_number:2d} {titel_short.ljust(28)} {pusher_navn[:15]}\n"
+            recent_text += f"    {date_str}\n\n"
+        recent_text += "```"
         
         embed.add_field(
             name="🕒 Seneste Færdiggjorte Jobs", 
-            value="Se separat embed nedenfor",
+            value=recent_text,
             inline=False
         )
     else:
         embed.add_field(
             name="🕒 Seneste Færdiggjorte Jobs",
-            value="```\nIngen endnu\n```",
+            value="```\nIngen færdiggjorte jobs endnu\n```",
             inline=False
         )
     
     embed.set_footer(text="Vagos Pusher Stats v1.0")
     embed.timestamp = datetime.now()
     
-    # Send main embed
+    # Send kun én embed (som på billedet)
     await kanal.send(embed=embed)
-    
-    # Send rankings embed if exists
-    if pusher_stats:
-        await kanal.send(embed=rankings_embed)
-    
-    # Send recent jobs embed if exists
-    if recent_jobs:
-        await kanal.send(embed=recent_embed)
 
 class JobControlView(View):
     def __init__(self, job_id):

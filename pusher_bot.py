@@ -6,6 +6,8 @@ from discord.ui import Button, View, Modal, TextInput, Select
 from datetime import datetime
 import json
 import asyncio
+import sqlite3
+from pathlib import Path
 
 # Miljøvariabler og token
 load_dotenv()  # Load from .env file if exists
@@ -30,49 +32,310 @@ PRIVAT_KATEGORI_ID = 1419003473386799267
 ADMIN_ROLLE_ID = 1418989096306741299
 PUSHER_STATS_KANAL_ID = 1419012741007409314
 
-# Data storage
-JOBS_FIL = "jobs_data.json"
-jobs_data = {
-    "permanent_jobs": [
-        "🚗 Køre rundt og sælge stoffer",
-        "💰 Hjælpe med money wash",
-        "🏠 Hjælpe med hus raids",
-        "⚔️ Hjælpe med gang wars",
-        "📦 Hjælpe med leveringer",
-        "🔫 Hjælpe med våben handel",
-        "🎯 Hjælpe med contracts"
-    ],
-    "member_jobs": [],
-    "active_jobs": {},
-    "completed_jobs": [],
-    "pusher_stats": {},
-    "job_counter": 1
-}
+# Database setup
+DATA_DIR = Path("/data") if Path("/data").exists() else Path(".")
+DB_PATH = DATA_DIR / "pusher_bot.db"
 
-def load_jobs_data():
-    """Load jobs data from file"""
-    global jobs_data
-    try:
-        if os.path.exists(JOBS_FIL):
-            with open(JOBS_FIL, "r", encoding="utf-8") as f:
-                jobs_data = json.load(f)
-    except Exception as e:
-        print(f"Fejl ved indlæsning af jobs data: {e}")
+# Default permanent jobs
+DEFAULT_PERMANENT_JOBS = [
+    "🚗 Køre rundt og sælge stoffer",
+    "💰 Hjælpe med money wash",
+    "🏠 Hjælpe med hus raids",
+    "⚔️ Hjælpe med gang wars",
+    "📦 Hjælpe med leveringer",
+    "🔫 Hjælpe med våben handel",
+    "🎯 Hjælpe med contracts"
+]
 
-def save_jobs_data():
-    """Save jobs data to file"""
+def init_database():
+    """Initialize SQLite database"""
     try:
-        with open(JOBS_FIL, "w", encoding="utf-8") as f:
-            json.dump(jobs_data, f, ensure_ascii=False, indent=2)
+        # Ensure data directory exists
+        DATA_DIR.mkdir(exist_ok=True)
+        
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        # Create tables
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS permanent_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_text TEXT UNIQUE NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS member_jobs (
+                id TEXT PRIMARY KEY,
+                titel TEXT NOT NULL,
+                beskrivelse TEXT NOT NULL,
+                belonning TEXT,
+                oprettet_af INTEGER NOT NULL,
+                oprettet_navn TEXT NOT NULL,
+                status TEXT DEFAULT 'ledig',
+                pusher_id INTEGER,
+                pusher_navn TEXT,
+                privat_kanal_id INTEGER,
+                oprettet_tid TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                taget_tid TIMESTAMP,
+                job_number INTEGER
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS completed_jobs (
+                id TEXT PRIMARY KEY,
+                titel TEXT NOT NULL,
+                beskrivelse TEXT NOT NULL,
+                belonning TEXT,
+                oprettet_af INTEGER NOT NULL,
+                oprettet_navn TEXT NOT NULL,
+                pusher_id INTEGER NOT NULL,
+                pusher_navn TEXT NOT NULL,
+                completed_tid TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                job_number INTEGER
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS pusher_stats (
+                pusher_id INTEGER PRIMARY KEY,
+                pusher_navn TEXT NOT NULL,
+                total_jobs INTEGER DEFAULT 0,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        ''')
+        
+        # Insert default permanent jobs if none exist
+        cursor.execute("SELECT COUNT(*) FROM permanent_jobs")
+        if cursor.fetchone()[0] == 0:
+            for job in DEFAULT_PERMANENT_JOBS:
+                cursor.execute("INSERT OR IGNORE INTO permanent_jobs (job_text) VALUES (?)", (job,))
+        
+        # Initialize job counter if not exists
+        cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('job_counter', '1')")
+        
+        conn.commit()
+        conn.close()
+        print("✅ Database initialized successfully")
+        
     except Exception as e:
-        print(f"Fejl ved gemning af jobs data: {e}")
+        print(f"❌ Fejl ved database initialisering: {e}")
+
+def get_permanent_jobs():
+    """Get all permanent jobs from database"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT job_text FROM permanent_jobs ORDER BY id")
+        jobs = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        return jobs
+    except Exception as e:
+        print(f"Fejl ved hentning af permanente jobs: {e}")
+        return DEFAULT_PERMANENT_JOBS
+
+def add_permanent_job(job_text):
+    """Add permanent job to database"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO permanent_jobs (job_text) VALUES (?)", (job_text,))
+        conn.commit()
+        conn.close()
+        return True
+    except sqlite3.IntegrityError:
+        return False  # Job already exists
+    except Exception as e:
+        print(f"Fejl ved tilføjelse af permanent job: {e}")
+        return False
+
+def update_permanent_job(old_text, new_text):
+    """Update permanent job in database"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("UPDATE permanent_jobs SET job_text = ? WHERE job_text = ?", (new_text, old_text))
+        conn.commit()
+        success = cursor.rowcount > 0
+        conn.close()
+        return success
+    except Exception as e:
+        print(f"Fejl ved opdatering af permanent job: {e}")
+        return False
+
+def remove_permanent_job(job_text):
+    """Remove permanent job from database"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM permanent_jobs WHERE job_text = ?", (job_text,))
+        conn.commit()
+        success = cursor.rowcount > 0
+        conn.close()
+        return success
+    except Exception as e:
+        print(f"Fejl ved fjernelse af permanent job: {e}")
+        return False
+
+def get_member_jobs():
+    """Get all member jobs from database"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, titel, beskrivelse, belonning, oprettet_af, oprettet_navn, 
+                   status, pusher_id, pusher_navn, privat_kanal_id, oprettet_tid, 
+                   taget_tid, job_number
+            FROM member_jobs 
+            ORDER BY job_number
+        """)
+        jobs = []
+        for row in cursor.fetchall():
+            job = {
+                "id": row[0], "titel": row[1], "beskrivelse": row[2], "belonning": row[3],
+                "oprettet_af": row[4], "oprettet_navn": row[5], "status": row[6],
+                "pusher_id": row[7], "pusher_navn": row[8], "privat_kanal_id": row[9],
+                "oprettet_tid": row[10], "taget_tid": row[11], "job_number": row[12]
+            }
+            jobs.append(job)
+        conn.close()
+        return jobs
+    except Exception as e:
+        print(f"Fejl ved hentning af medlem jobs: {e}")
+        return []
+
+def add_member_job(job_data):
+    """Add member job to database"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        # Get next job number
+        cursor.execute("SELECT value FROM settings WHERE key = 'job_counter'")
+        job_counter = int(cursor.fetchone()[0])
+        
+        cursor.execute("""
+            INSERT INTO member_jobs 
+            (id, titel, beskrivelse, belonning, oprettet_af, oprettet_navn, job_number)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            job_data["id"], job_data["titel"], job_data["beskrivelse"],
+            job_data["belonning"], job_data["oprettet_af"], job_data["oprettet_navn"],
+            job_counter
+        ))
+        
+        # Update job counter
+        cursor.execute("UPDATE settings SET value = ? WHERE key = 'job_counter'", (str(job_counter + 1),))
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Fejl ved tilføjelse af medlem job: {e}")
+        return False
+
+def update_member_job_status(job_id, status, pusher_id=None, pusher_navn=None):
+    """Update member job status in database"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        if pusher_id and pusher_navn:
+            cursor.execute("""
+                UPDATE member_jobs 
+                SET status = ?, pusher_id = ?, pusher_navn = ?, taget_tid = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (status, pusher_id, pusher_navn, job_id))
+        else:
+            cursor.execute("UPDATE member_jobs SET status = ? WHERE id = ?", (status, job_id))
+        
+        conn.commit()
+        success = cursor.rowcount > 0
+        conn.close()
+        return success
+    except Exception as e:
+        print(f"Fejl ved opdatering af job status: {e}")
+        return False
+
+def complete_member_job(job_id):
+    """Complete a member job and update stats"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        # Get job data
+        cursor.execute("SELECT * FROM member_jobs WHERE id = ?", (job_id,))
+        job_row = cursor.fetchone()
+        if not job_row:
+            conn.close()
+            return False
+        
+        # Move to completed_jobs
+        cursor.execute("""
+            INSERT INTO completed_jobs 
+            (id, titel, beskrivelse, belonning, oprettet_af, oprettet_navn, 
+             pusher_id, pusher_navn, job_number)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (job_row[0], job_row[1], job_row[2], job_row[3], job_row[4], 
+              job_row[5], job_row[7], job_row[8], job_row[12]))
+        
+        # Update pusher stats
+        cursor.execute("""
+            INSERT OR REPLACE INTO pusher_stats (pusher_id, pusher_navn, total_jobs)
+            VALUES (?, ?, COALESCE((SELECT total_jobs FROM pusher_stats WHERE pusher_id = ?), 0) + 1)
+        """, (job_row[7], job_row[8], job_row[7]))
+        
+        # Remove from member_jobs
+        cursor.execute("DELETE FROM member_jobs WHERE id = ?", (job_id,))
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Fejl ved færdiggørelse af job: {e}")
+        return False
+
+def get_member_job_by_id(job_id):
+    """Get specific member job by ID"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, titel, beskrivelse, belonning, oprettet_af, oprettet_navn, 
+                   status, pusher_id, pusher_navn, privat_kanal_id, oprettet_tid, 
+                   taget_tid, job_number
+            FROM member_jobs WHERE id = ?
+        """, (job_id,))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            return {
+                "id": row[0], "titel": row[1], "beskrivelse": row[2], "belonning": row[3],
+                "oprettet_af": row[4], "oprettet_navn": row[5], "status": row[6],
+                "pusher_id": row[7], "pusher_navn": row[8], "privat_kanal_id": row[9],
+                "oprettet_tid": row[10], "taget_tid": row[11], "job_number": row[12]
+            }
+        return None
+    except Exception as e:
+        print(f"Fejl ved hentning af job: {e}")
+        return None
 
 @bot.event
 async def on_ready():
     print(f"Pusher Bot er online som {bot.user}")
     
-    # Load data
-    load_jobs_data()
+    # Initialize database
+    init_database()
     
     # Setup kanaler
     await setup_pusher_kanal()
@@ -163,9 +426,13 @@ class OpretOpgaveModal(Modal):
         self.add_item(self.belonning)
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Opret ny opgave
-        job_id = f"job_{jobs_data['job_counter']}"
-        jobs_data['job_counter'] += 1
+        # Get next job counter from database
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM settings WHERE key = 'job_counter'")
+        job_counter = int(cursor.fetchone()[0])
+        job_id = f"job_{job_counter}"
+        conn.close()
         
         ny_opgave = {
             "id": job_id,
@@ -173,22 +440,18 @@ class OpretOpgaveModal(Modal):
             "beskrivelse": self.opgave_beskrivelse.value,
             "belonning": self.belonning.value if self.belonning.value else "Ikke angivet",
             "oprettet_af": interaction.user.id,
-            "oprettet_navn": interaction.user.display_name,
-            "status": "ledig",
-            "pusher_id": None,
-            "pusher_navn": None,
-            "oprettet_tid": datetime.now().isoformat()
+            "oprettet_navn": interaction.user.display_name
         }
         
-        jobs_data['member_jobs'].append(ny_opgave)
-        save_jobs_data()
-        
-        await interaction.response.send_message("✅ Din opgave er blevet oprettet og sendt til pusherne!", ephemeral=True)
-        
-        # Opdater pusher kanal
-        pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
-        if pusher_kanal:
-            await update_pusher_embed(pusher_kanal)
+        if add_member_job(ny_opgave):
+            await interaction.response.send_message("✅ Din opgave er blevet oprettet og sendt til pusherne!", ephemeral=True)
+            
+            # Opdater pusher kanal
+            pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
+            if pusher_kanal:
+                await update_pusher_embed(pusher_kanal)
+        else:
+            await interaction.response.send_message("⛔ Fejl ved oprettelse af opgave!", ephemeral=True)
 
 async def send_pusher_embed(kanal):
     """Send pusher embed med alle jobs"""
@@ -199,27 +462,47 @@ async def send_pusher_embed(kanal):
     )
     
     # Permanente opgaver
-    permanent_text = "\n".join([f"• {job}" for job in jobs_data["permanent_jobs"]])
+    permanent_jobs = get_permanent_jobs()
+    permanent_text = "\n".join([f"• {job}" for job in permanent_jobs])
+    
+    # Permanent jobs embed
+    perm_embed = discord.Embed(
+        title="🔄 Permanente Opgaver",
+        description=f"```\n{permanent_text}\n```",
+        color=0x5865F2
+    )
+    
     embed.add_field(
         name="🔄 Permanente Opgaver",
-        value=f"```\n{permanent_text}\n```",
+        value="Se separat embed nedenfor",
         inline=False
     )
     
-    # Medlems opgaver
-    if jobs_data["member_jobs"]:
+    # Medlems opgaver med nummerering
+    member_jobs = get_member_jobs()
+    if member_jobs:
         member_jobs_text = ""
-        for job in jobs_data["member_jobs"]:
+        for job in member_jobs:
             status_emoji = "🟢" if job["status"] == "ledig" else "🔴"
-            member_jobs_text += f"{status_emoji} **{job['titel']}**\n"
-            member_jobs_text += f"   └ Af: {job['oprettet_navn']}\n"
+            job_number = job.get("job_number", "?")
+            member_jobs_text += f"**#{job_number}** {status_emoji} **{job['titel']}**\n"
+            member_jobs_text += f"       📝 {job['beskrivelse'][:50]}{'...' if len(job['beskrivelse']) > 50 else ''}\n"
+            member_jobs_text += f"       💰 {job['belonning']}\n"
+            member_jobs_text += f"       👤 Af: {job['oprettet_navn']}\n"
             if job["status"] == "optaget":
-                member_jobs_text += f"   └ Pusher: {job['pusher_navn']}\n"
+                member_jobs_text += f"       🎯 Pusher: {job['pusher_navn']}\n"
             member_jobs_text += "\n"
+        
+        # Member jobs embed  
+        member_embed = discord.Embed(
+            title="📋 Medlems Opgaver",
+            description=member_jobs_text,
+            color=0x57F287
+        )
         
         embed.add_field(
             name="📋 Medlems Opgaver",
-            value=member_jobs_text if member_jobs_text else "```\nIngen opgaver lige nu\n```",
+            value="Se separat embed nedenfor",
             inline=False
         )
     else:
@@ -231,17 +514,27 @@ async def send_pusher_embed(kanal):
     
     embed.add_field(
         name="ℹ️ Information",
-        value="Tryk på 'Tag Job' knapperne nedenfor for at tage en opgave. Du får adgang til en privat kanal med medlemmet.",
+        value="Tryk på nummerknapperne nedenfor for at tage en opgave. Du får adgang til en privat kanal med medlemmet.",
         inline=False
     )
     
     embed.set_footer(text="Vagos Pusher System v1.0")
     embed.timestamp = datetime.now()
     
-    # Opret view med knapper for jobs
-    view = await create_job_buttons_view()
+    # Send main embed
+    await kanal.send(embed=embed)
     
-    await kanal.send(embed=embed, view=view)
+    # Send permanent jobs embed
+    await kanal.send(embed=perm_embed)
+    
+    # Send member jobs embed if any exist
+    if member_jobs:
+        await kanal.send(embed=member_embed)
+    
+    # Send buttons
+    view = await create_job_buttons_view()
+    if view.children:  # Only send if there are buttons
+        await kanal.send("**Tryk på nummer for at tage job:**", view=view)
 
 async def update_pusher_embed(kanal):
     """Opdater pusher embed"""
@@ -253,14 +546,16 @@ async def update_pusher_embed(kanal):
         print(f"Fejl ved opdatering af pusher embed: {e}")
 
 async def create_job_buttons_view():
-    """Opret view med knapper for alle ledige jobs"""
+    """Opret view med nummerknapper for alle ledige jobs"""
     view = View(timeout=None)
     
     # Tilføj knapper for medlems opgaver
-    for job in jobs_data["member_jobs"]:
+    member_jobs = get_member_jobs()
+    for job in member_jobs:
         if job["status"] == "ledig":
+            job_number = job.get("job_number", "?")
             button = Button(
-                label=f"Tag Job: {job['titel'][:20]}...",
+                label=f"#{job_number}",
                 style=discord.ButtonStyle.success,
                 custom_id=f"take_job_{job['id']}"
             )
@@ -319,6 +614,41 @@ async def setup_pusher_stats_kanal():
     # Send stats embed
     await send_pusher_stats_embed(kanal)
 
+def get_pusher_stats():
+    """Get pusher statistics from database"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT pusher_id, pusher_navn, total_jobs 
+            FROM pusher_stats 
+            ORDER BY total_jobs DESC
+        """)
+        stats = cursor.fetchall()
+        conn.close()
+        return stats
+    except Exception as e:
+        print(f"Fejl ved hentning af pusher stats: {e}")
+        return []
+
+def get_recent_completed_jobs(limit=5):
+    """Get recent completed jobs from database"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT titel, pusher_navn, completed_tid, job_number
+            FROM completed_jobs 
+            ORDER BY completed_tid DESC 
+            LIMIT ?
+        """, (limit,))
+        jobs = cursor.fetchall()
+        conn.close()
+        return jobs
+    except Exception as e:
+        print(f"Fejl ved hentning af seneste jobs: {e}")
+        return []
+
 async def send_pusher_stats_embed(kanal):
     """Send pusher statistik embed"""
     embed = discord.Embed(
@@ -327,52 +657,74 @@ async def send_pusher_stats_embed(kanal):
         color=0x00FF00
     )
     
-    # Hent alle med pusher rolle
-    guild = kanal.guild
-    pusher_rolle = None
+    # Get pusher stats from database
+    pusher_stats = get_pusher_stats()
     
-    # Find pusher rolle (du skal tilføje pusher rolle ID her)
-    # For nu bruger vi alle medlemmer som eksempel
-    if not jobs_data["pusher_stats"]:
+    if not pusher_stats:
         embed.add_field(
             name="📋 Status",
             value="```\nIngen færdiggjorte jobs endnu\n```",
             inline=False
         )
     else:
-        stats_text = ""
-        for pusher_id, stats in jobs_data["pusher_stats"].items():
-            try:
-                pusher = await bot.fetch_user(int(pusher_id))
-                completed_count = len(stats.get("completed_jobs", []))
-                stats_text += f"👤 **{pusher.display_name}**: {completed_count} jobs\n"
-            except:
-                continue
+        # Create rankings embed
+        rankings_text = ""
+        for i, (pusher_id, pusher_navn, total_jobs) in enumerate(pusher_stats, 1):
+            medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else "🏅"
+            rankings_text += f"{medal} **{pusher_navn}**: {total_jobs} jobs\n"
         
-        if stats_text:
-            embed.add_field(
-                name="🏆 Pusher Rankings",
-                value=stats_text,
-                inline=False
-            )
-    
-    # Seneste færdiggjorte jobs
-    if jobs_data["completed_jobs"]:
-        recent_jobs = jobs_data["completed_jobs"][-5:]  # Sidste 5 jobs
-        recent_text = ""
-        for job in reversed(recent_jobs):
-            recent_text += f"✅ **{job['titel']}** - {job['pusher_navn']} ({job['completed_tid'][:10]})\n"
+        rankings_embed = discord.Embed(
+            title="🏆 Pusher Rankings",
+            description=rankings_text,
+            color=0xFFD700
+        )
         
         embed.add_field(
+            name="🏆 Pusher Rankings",
+            value="Se separat embed nedenfor",
+            inline=False
+        )
+    
+    # Recent completed jobs
+    recent_jobs = get_recent_completed_jobs(5)
+    if recent_jobs:
+        recent_text = ""
+        for titel, pusher_navn, completed_tid, job_number in recent_jobs:
+            date_str = completed_tid[:10] if completed_tid else "?"
+            recent_text += f"✅ **#{job_number} {titel}**\n"
+            recent_text += f"    🎯 {pusher_navn} ({date_str})\n\n"
+        
+        recent_embed = discord.Embed(
+            title="🕒 Seneste Færdiggjorte Jobs",
+            description=recent_text,
+            color=0x57F287
+        )
+        
+        embed.add_field(
+            name="🕒 Seneste Færdiggjorte Jobs", 
+            value="Se separat embed nedenfor",
+            inline=False
+        )
+    else:
+        embed.add_field(
             name="🕒 Seneste Færdiggjorte Jobs",
-            value=recent_text if recent_text else "Ingen endnu",
+            value="```\nIngen endnu\n```",
             inline=False
         )
     
     embed.set_footer(text="Vagos Pusher Stats v1.0")
     embed.timestamp = datetime.now()
     
+    # Send main embed
     await kanal.send(embed=embed)
+    
+    # Send rankings embed if exists
+    if pusher_stats:
+        await kanal.send(embed=rankings_embed)
+    
+    # Send recent jobs embed if exists
+    if recent_jobs:
+        await kanal.send(embed=recent_embed)
 
 class JobControlView(View):
     def __init__(self, job_id):
@@ -382,11 +734,7 @@ class JobControlView(View):
     @discord.ui.button(label="❌ Cancel Job", style=discord.ButtonStyle.danger)
     async def cancel_job(self, interaction: discord.Interaction, button: Button):
         # Find jobbet
-        job = None
-        for j in jobs_data["member_jobs"]:
-            if j["id"] == self.job_id:
-                job = j
-                break
+        job = get_member_job_by_id(self.job_id)
         
         if not job:
             await interaction.response.send_message("⛔ Dette job eksisterer ikke længere!", ephemeral=True)
@@ -398,38 +746,27 @@ class JobControlView(View):
             return
         
         # Cancel jobbet
-        job["status"] = "ledig"
-        job["pusher_id"] = None
-        job["pusher_navn"] = None
-        if "taget_tid" in job:
-            del job["taget_tid"]
-        
-        save_jobs_data()
-        
-        await interaction.response.send_message("✅ Jobbet er blevet cancelled og er nu ledigt igen!", ephemeral=False)
-        
-        # Opdater pusher kanal
-        pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
-        if pusher_kanal:
-            await update_pusher_embed(pusher_kanal)
-        
-        # Slet den private kanal efter 10 sekunder
-        await asyncio.sleep(10)
-        try:
-            await interaction.channel.delete()
-        except:
-            pass
+        if update_member_job_status(self.job_id, "ledig"):
+            await interaction.response.send_message("✅ Jobbet er blevet cancelled og er nu ledigt igen!", ephemeral=False)
+            
+            # Opdater pusher kanal
+            pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
+            if pusher_kanal:
+                await update_pusher_embed(pusher_kanal)
+            
+            # Slet den private kanal efter 10 sekunder
+            await asyncio.sleep(10)
+            try:
+                await interaction.channel.delete()
+            except:
+                pass
+        else:
+            await interaction.response.send_message("⛔ Fejl ved cancellation af job!", ephemeral=True)
 
     @discord.ui.button(label="✅ Job Færdigt", style=discord.ButtonStyle.success)
     async def complete_job(self, interaction: discord.Interaction, button: Button):
         # Find jobbet
-        job = None
-        job_index = None
-        for i, j in enumerate(jobs_data["member_jobs"]):
-            if j["id"] == self.job_id:
-                job = j
-                job_index = i
-                break
+        job = get_member_job_by_id(self.job_id)
         
         if not job:
             await interaction.response.send_message("⛔ Dette job eksisterer ikke længere!", ephemeral=True)
@@ -441,46 +778,26 @@ class JobControlView(View):
             return
         
         # Marker job som færdigt
-        job["status"] = "færdigt"
-        job["completed_tid"] = datetime.now().isoformat()
-        
-        # Flyt til completed jobs
-        jobs_data["completed_jobs"].append(job.copy())
-        
-        # Opdater pusher stats
-        pusher_id = str(job["pusher_id"])
-        if pusher_id not in jobs_data["pusher_stats"]:
-            jobs_data["pusher_stats"][pusher_id] = {"completed_jobs": []}
-        
-        jobs_data["pusher_stats"][pusher_id]["completed_jobs"].append({
-            "job_id": job["id"],
-            "titel": job["titel"],
-            "completed_tid": job["completed_tid"],
-            "medlem_navn": job["oprettet_navn"]
-        })
-        
-        # Fjern fra member_jobs
-        jobs_data["member_jobs"].pop(job_index)
-        
-        save_jobs_data()
-        
-        await interaction.response.send_message("🎉 Jobbet er markeret som færdigt! Godt arbejde!", ephemeral=False)
-        
-        # Opdater pusher kanal og stats
-        pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
-        if pusher_kanal:
-            await update_pusher_embed(pusher_kanal)
-        
-        stats_kanal = bot.get_channel(PUSHER_STATS_KANAL_ID)
-        if stats_kanal:
-            await update_pusher_stats_embed(stats_kanal)
-        
-        # Slet den private kanal efter 10 sekunder
-        await asyncio.sleep(10)
-        try:
-            await interaction.channel.delete()
-        except:
-            pass
+        if complete_member_job(self.job_id):
+            await interaction.response.send_message("🎉 Jobbet er markeret som færdigt! Godt arbejde!", ephemeral=False)
+            
+            # Opdater pusher kanal og stats
+            pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
+            if pusher_kanal:
+                await update_pusher_embed(pusher_kanal)
+            
+            stats_kanal = bot.get_channel(PUSHER_STATS_KANAL_ID)
+            if stats_kanal:
+                await update_pusher_stats_embed(stats_kanal)
+            
+            # Slet den private kanal efter 10 sekunder
+            await asyncio.sleep(10)
+            try:
+                await interaction.channel.delete()
+            except:
+                pass
+        else:
+            await interaction.response.send_message("⛔ Fejl ved færdiggørelse af job!", ephemeral=True)
 
 async def update_pusher_stats_embed(kanal):
     """Opdater pusher stats embed"""
@@ -504,11 +821,7 @@ async def handle_take_job(interaction, custom_id):
     job_id = custom_id.replace("take_job_", "")
     
     # Find jobbet
-    job = None
-    for j in jobs_data["member_jobs"]:
-        if j["id"] == job_id:
-            job = j
-            break
+    job = get_member_job_by_id(job_id)
     
     if not job:
         await interaction.response.send_message("⛔ Dette job eksisterer ikke længere!", ephemeral=True)
@@ -519,10 +832,9 @@ async def handle_take_job(interaction, custom_id):
         return
     
     # Marker job som optaget
-    job["status"] = "optaget"
-    job["pusher_id"] = interaction.user.id
-    job["pusher_navn"] = interaction.user.display_name
-    job["taget_tid"] = datetime.now().isoformat()
+    if not update_member_job_status(job_id, "optaget", interaction.user.id, interaction.user.display_name):
+        await interaction.response.send_message("⛔ Fejl ved tildeling af job!", ephemeral=True)
+        return
     
     # Opret privat kanal
     try:
@@ -585,8 +897,11 @@ async def handle_take_job(interaction, custom_id):
         await privat_kanal.send(f"{medlem.mention} {pusher.mention}", embed=job_embed, view=control_view)
         
         # Gem kanal ID til jobbet
-        job["privat_kanal_id"] = privat_kanal.id
-        save_jobs_data()
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("UPDATE member_jobs SET privat_kanal_id = ? WHERE id = ?", (privat_kanal.id, job_id))
+        conn.commit()
+        conn.close()
         
         await interaction.response.send_message(f"✅ Du har taget jobbet! Privat kanal oprettet: {privat_kanal.mention}", ephemeral=True)
         
@@ -615,24 +930,20 @@ class AddPermOpgaveModal(Modal):
     async def on_submit(self, interaction: discord.Interaction):
         ny_opgave = self.opgave_tekst.value
         
-        if ny_opgave in jobs_data["permanent_jobs"]:
-            await interaction.response.send_message("⛔ Denne opgave eksisterer allerede!", ephemeral=True)
-            return
-        
-        jobs_data["permanent_jobs"].append(ny_opgave)
-        save_jobs_data()
-        
-        await interaction.response.send_message(f"✅ Permanent opgave tilføjet: {ny_opgave}", ephemeral=True)
-        
-        # Opdater pusher kanal
-        pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
-        if pusher_kanal:
-            await update_pusher_embed(pusher_kanal)
+        if add_permanent_job(ny_opgave):
+            await interaction.response.send_message(f"✅ Permanent opgave tilføjet: {ny_opgave}", ephemeral=True)
+            
+            # Opdater pusher kanal
+            pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
+            if pusher_kanal:
+                await update_pusher_embed(pusher_kanal)
+        else:
+            await interaction.response.send_message("⛔ Denne opgave eksisterer allerede eller fejl ved tilføjelse!", ephemeral=True)
 
 class EditPermOpgaveModal(Modal):
-    def __init__(self, gammel_opgave, index):
+    def __init__(self, gammel_opgave):
         super().__init__(title="✏️ Rediger Permanent Opgave")
-        self.index = index
+        self.gammel_opgave = gammel_opgave
         
         self.opgave_tekst = TextInput(
             label="Opgave Tekst",
@@ -645,64 +956,65 @@ class EditPermOpgaveModal(Modal):
 
     async def on_submit(self, interaction: discord.Interaction):
         ny_tekst = self.opgave_tekst.value
-        gammel_tekst = jobs_data["permanent_jobs"][self.index]
         
-        jobs_data["permanent_jobs"][self.index] = ny_tekst
-        save_jobs_data()
-        
-        await interaction.response.send_message(f"✅ Opgave opdateret:\n**Fra:** {gammel_tekst}\n**Til:** {ny_tekst}", ephemeral=True)
-        
-        # Opdater pusher kanal
-        pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
-        if pusher_kanal:
-            await update_pusher_embed(pusher_kanal)
+        if update_permanent_job(self.gammel_opgave, ny_tekst):
+            await interaction.response.send_message(f"✅ Opgave opdateret:\n**Fra:** {self.gammel_opgave}\n**Til:** {ny_tekst}", ephemeral=True)
+            
+            # Opdater pusher kanal
+            pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
+            if pusher_kanal:
+                await update_pusher_embed(pusher_kanal)
+        else:
+            await interaction.response.send_message("⛔ Fejl ved opdatering af opgave!", ephemeral=True)
 
 class RemovePermOpgaveSelect(Select):
     def __init__(self):
         options = []
-        for i, opgave in enumerate(jobs_data["permanent_jobs"]):
+        permanent_jobs = get_permanent_jobs()
+        for opgave in permanent_jobs:
             # Begræns længden af opgave teksten til select menu
             display_text = opgave[:50] + "..." if len(opgave) > 50 else opgave
             options.append(discord.SelectOption(
                 label=display_text,
-                value=str(i),
+                value=opgave,
                 description=f"Fjern denne opgave"
             ))
         
         super().__init__(placeholder="Vælg opgave at fjerne...", options=options, max_values=1)
 
     async def callback(self, interaction: discord.Interaction):
-        index = int(self.values[0])
-        fjernet_opgave = jobs_data["permanent_jobs"].pop(index)
-        save_jobs_data()
+        opgave_to_remove = self.values[0]
         
-        await interaction.response.send_message(f"✅ Permanent opgave fjernet: {fjernet_opgave}", ephemeral=True)
-        
-        # Opdater pusher kanal
-        pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
-        if pusher_kanal:
-            await update_pusher_embed(pusher_kanal)
+        if remove_permanent_job(opgave_to_remove):
+            await interaction.response.send_message(f"✅ Permanent opgave fjernet: {opgave_to_remove}", ephemeral=True)
+            
+            # Opdater pusher kanal
+            pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
+            if pusher_kanal:
+                await update_pusher_embed(pusher_kanal)
+        else:
+            await interaction.response.send_message("⛔ Fejl ved fjernelse af opgave!", ephemeral=True)
 
 class EditPermOpgaveSelect(Select):
     def __init__(self):
         options = []
-        for i, opgave in enumerate(jobs_data["permanent_jobs"]):
+        permanent_jobs = get_permanent_jobs()
+        for opgave in permanent_jobs:
             # Begræns længden af opgave teksten til select menu
             display_text = opgave[:50] + "..." if len(opgave) > 50 else opgave
             options.append(discord.SelectOption(
                 label=display_text,
-                value=str(i),
+                value=opgave,
                 description=f"Rediger denne opgave"
             ))
         
         super().__init__(placeholder="Vælg opgave at redigere...", options=options, max_values=1)
 
     async def callback(self, interaction: discord.Interaction):
-        index = int(self.values[0])
-        gammel_opgave = jobs_data["permanent_jobs"][index]
+        gammel_opgave = self.values[0]
         
         # Send modal
-        await interaction.response.send_modal(EditPermOpgaveModal(gammel_opgave, index))
+        await interaction.response.send_modal(EditPermOpgaveModal(gammel_opgave))
 
 def tjek_admin_rolle(user):
     """Tjek om brugeren har admin rollen"""
@@ -772,7 +1084,8 @@ async def pusherbot_admin(ctx, action=None, subaction=None):
         await ctx.send("Tryk på knappen for at tilføje en ny permanent opgave:", view=view)
     
     elif subaction.lower() == "edit":
-        if not jobs_data["permanent_jobs"]:
+        permanent_jobs = get_permanent_jobs()
+        if not permanent_jobs:
             await ctx.send("⛔ Ingen permanente opgaver at redigere!")
             return
         
@@ -781,7 +1094,8 @@ async def pusherbot_admin(ctx, action=None, subaction=None):
         await ctx.send("Vælg opgave at redigere:", view=view)
     
     elif subaction.lower() == "remove":
-        if not jobs_data["permanent_jobs"]:
+        permanent_jobs = get_permanent_jobs()
+        if not permanent_jobs:
             await ctx.send("⛔ Ingen permanente opgaver at fjerne!")
             return
         
@@ -798,18 +1112,30 @@ async def admin_reset(ctx):
     if not tjek_admin_rolle(ctx.author):
         await ctx.send("⛔ Du har ikke tilladelse til at nulstille systemet!")
         return
+    
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
         
-    jobs_data["member_jobs"] = []
-    jobs_data["active_jobs"] = {}
-    jobs_data["completed_jobs"] = []
-    jobs_data["pusher_stats"] = {}
-    save_jobs_data()
-    
-    # Opdater kanaler
-    await setup_pusher_kanal()
-    await setup_medlem_kanal()
-    await setup_pusher_stats_kanal()
-    
-    await ctx.send("✅ Alle jobs og statistikker er blevet nulstillet!")
+        # Clear all tables except permanent_jobs
+        cursor.execute("DELETE FROM member_jobs")
+        cursor.execute("DELETE FROM completed_jobs")
+        cursor.execute("DELETE FROM pusher_stats")
+        cursor.execute("UPDATE settings SET value = '1' WHERE key = 'job_counter'")
+        
+        conn.commit()
+        conn.close()
+        
+        # Opdater kanaler
+        await setup_pusher_kanal()
+        await setup_medlem_kanal()
+        await setup_pusher_stats_kanal()
+        
+        await ctx.send("✅ Alle jobs og statistikker er blevet nulstillet!")
+        
+    except Exception as e:
+        await ctx.send(f"⛔ Fejl ved nulstilling: {e}")
+        print(f"Fejl ved admin reset: {e}")
 
 bot.run(TOKEN)
+

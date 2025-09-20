@@ -266,6 +266,33 @@ def update_member_job_status(job_id, status, pusher_id=None, pusher_navn=None):
         print(f"Fejl ved opdatering af job status: {e}")
         return False
 
+def update_private_channel_id(job_id, channel_id):
+    """Update private channel ID for a job"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("UPDATE member_jobs SET privat_kanal_id = ? WHERE id = ?", (channel_id, job_id))
+        conn.commit()
+        success = cursor.rowcount > 0
+        conn.close()
+        return success
+    except Exception as e:
+        print(f"Fejl ved opdatering af kanal ID: {e}")
+        return False
+
+def get_all_active_private_channels():
+    """Get all active private channel IDs from database"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT privat_kanal_id, id FROM member_jobs WHERE privat_kanal_id IS NOT NULL AND status = 'optaget'")
+        channels = cursor.fetchall()
+        conn.close()
+        return channels
+    except Exception as e:
+        print(f"Fejl ved hentning af private kanaler: {e}")
+        return []
+
 def complete_member_job(job_id):
     """Complete a member job and update stats"""
     try:
@@ -619,6 +646,9 @@ async def update_pusher_embed(kanal):
         if member_jobs:
             await send_member_jobs_sections(kanal, member_jobs)
         
+        # Opdater knapper i alle aktive private kanaler
+        await update_all_private_channel_buttons()
+        
     except Exception as e:
         print(f"Fejl ved opdatering af pusher embed: {e}")
         # Fallback: purge og send helt nyt
@@ -627,6 +657,63 @@ async def update_pusher_embed(kanal):
             await send_pusher_embed(kanal)
         except Exception as e2:
             print(f"Fallback fejl: {e2}")
+
+async def update_all_private_channel_buttons():
+    """Opdater knapper i alle aktive private kanaler"""
+    try:
+        active_channels = get_all_active_private_channels()
+        
+        for channel_id, job_id in active_channels:
+            if channel_id:
+                await update_private_channel_buttons(channel_id, job_id)
+                
+    except Exception as e:
+        print(f"Fejl ved opdatering af private kanal knapper: {e}")
+
+async def update_private_channel_buttons(channel_id, job_id):
+    """Opdater knapper i en specifik privat kanal"""
+    try:
+        channel = bot.get_channel(channel_id)
+        if not channel:
+            return
+        
+        # Find "Kontrol Panel" beskeden med knapper
+        control_panel_message = None
+        async for message in channel.history(limit=20):
+            if (message.author == bot.user and 
+                message.components and 
+                message.content and 
+                "Kontrol Panel" in message.content):
+                control_panel_message = message
+                break
+        
+        if control_panel_message:
+            # Hent opdateret job data
+            job = get_member_job_by_id(job_id)
+            if not job:
+                return
+            
+            # Opret nye knapper med opdateret data
+            new_control_view = JobControlView(job_id)
+            
+            # Rediger kun knapperne, bevar beskeden
+            try:
+                await control_panel_message.edit(content="**🔄 Opdateret Kontrol Panel:**", view=new_control_view)
+                print(f"✅ Opdaterede knapper i kanal {channel_id}")
+            except Exception as edit_error:
+                print(f"Fejl ved redigering af kontrol panel: {edit_error}")
+                # Hvis redigering fejler, send ny besked
+                new_control_view = JobControlView(job_id)
+                await channel.send("**🔄 Nyt Kontrol Panel:**", view=new_control_view)
+        else:
+            # Hvis ingen kontrol panel findes, opret et nyt
+            job = get_member_job_by_id(job_id)
+            if job:
+                new_control_view = JobControlView(job_id)
+                await channel.send("**🔄 Kontrol Panel:**", view=new_control_view)
+                
+    except Exception as e:
+        print(f"Fejl ved opdatering af private kanal {channel_id}: {e}")
 
 
 async def send_medlem_embed(kanal):
@@ -1075,17 +1162,15 @@ async def handle_take_job(interaction, custom_id):
         
         job_embed.set_footer(text="I kan nu koordinere jeres samarbejde her!")
         
-        # Tilføj job kontrol knapper
-        control_view = JobControlView(job_id)
+        # Send initial besked uden knapper
+        await privat_kanal.send(f"{medlem.mention} {pusher.mention}", embed=job_embed)
         
-        await privat_kanal.send(f"{medlem.mention} {pusher.mention}", embed=job_embed, view=control_view)
+        # Send separat besked med knapper (denne kan opdateres senere)
+        control_view = JobControlView(job_id)
+        await privat_kanal.send("**Kontrol Panel:**", view=control_view)
         
         # Gem kanal ID til jobbet
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("UPDATE member_jobs SET privat_kanal_id = ? WHERE id = ?", (privat_kanal.id, job_id))
-        conn.commit()
-        conn.close()
+        update_private_channel_id(job_id, privat_kanal.id)
         
         await interaction.response.send_message(f"✅ Du har taget jobbet! Privat kanal oprettet: {privat_kanal.mention}", ephemeral=True)
         

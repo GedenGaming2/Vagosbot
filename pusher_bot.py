@@ -925,9 +925,9 @@ class JobControlView(View):
             await interaction.response.send_message("⛔ Dette job eksisterer ikke længere!", ephemeral=True)
             return
         
-        # Tjek om brugeren er pusher på jobbet
-        if interaction.user.id != job.get("pusher_id"):
-            await interaction.response.send_message("⛔ Kun pusheren kan markere jobbet som færdigt!", ephemeral=True)
+        # Tjek om brugeren er medlemmet der oprettede jobbet
+        if interaction.user.id != job.get("oprettet_af"):
+            await interaction.response.send_message("⛔ Kun medlemmet der oprettede jobbet kan markere det som færdigt!", ephemeral=True)
             return
         
         # Marker job som færdigt

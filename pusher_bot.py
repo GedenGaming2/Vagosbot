@@ -26,7 +26,7 @@ intents.members = True  # Nødvendigt for member events
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Kanal og rolle IDs
-MEDLEM_ROLLE_ID = 1419002926675791993
+MEDLEM_ROLLE_ID = 1422336706614399126
 PUSHER_KANAL_ID = 1419000630927691787
 MEDLEM_KANAL_ID = 1419003264690556999
 PRIVAT_KATEGORI_ID = 1419003473386799267

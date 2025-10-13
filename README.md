@@ -1,4 +1,4 @@
-# Vagos Pusher Bot
+# Silent Devils MC Pusher Bot
 
 En Discord bot til at koordinere pusher-jobs mellem medlemmer og pusherne i banden.
 
@@ -49,11 +49,14 @@ Se `DEPLOYMENT.md` for detaljeret guide.
 ## Kanal Konfiguration
 
 Botten er konfigureret til følgende Discord IDs:
-- **Medlem rolle**: 1419002926675791993
-- **Admin rolle**: 1418989096306741299
-- **Pusher kanal**: 1419000630927691787 
+- **Medlem roller**: 1427380362933309553, 1427380405820199095, 1427380453257511072, 1427380496106524672, 1427380535834972301, 1427380589555876051, 1427380624813064304, 1427380609403191386
+- **Admin roller**: 1427380609403191386, 1427380624813064304, 1427380589555876051, 1427380535834972301, 1427380496106524672, 1427380453257511072
+- **Pusher rolle**: 1427387819264835715
+- **Pusher opgave kanal**: 1427388722709663895
+- **Pusher stats kanal**: 1427388707807297556
 - **Medlem kanal**: 1419003264690556999
-- **Privat kategori**: 1419003473386799267
+- **Ticket kategori**: 1427389435720241183
+- **Absolut admin ID**: 356831538916098048
 
 ## Hvordan det fungerer
 
@@ -66,7 +69,7 @@ Botten er konfigureret til følgende Discord IDs:
 
 ## Admin Funktioner
 
-Administratorer med rollen (1418989096306741299) kan administrere permanente opgaver:
+Administratorer med admin roller eller absolut admin ID kan administrere permanente opgaver:
 
 ### Kommandoer:
 - `!pusherbot` - Vis admin hjælp

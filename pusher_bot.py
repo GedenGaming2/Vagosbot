@@ -26,13 +26,30 @@ intents.members = True  # Nødvendigt for member events
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Kanal og rolle IDs
-MEDLEM_ROLLE_ID = 1422336706614399126
-PUSHER_KANAL_ID = 1419000630927691787
-MEDLEM_KANAL_ID = 1419003264690556999
-PRIVAT_KATEGORI_ID = 1419003473386799267
-ADMIN_ROLLE_ID = 1418989096306741299
-PUSHER_STATS_KANAL_ID = 1419012741007409314
-PUSHER_ROLLE_ID = 1419000261141332059
+MEDLEM_ROLLE_IDS = [
+    1427380362933309553,
+    1427380405820199095,
+    1427380453257511072,
+    1427380496106524672,
+    1427380535834972301,
+    1427380589555876051,
+    1427380624813064304,
+    1427380609403191386
+]
+ADMIN_ROLLE_IDS = [
+    1427380609403191386,
+    1427380624813064304,
+    1427380589555876051,
+    1427380535834972301,
+    1427380496106524672,
+    1427380453257511072
+]
+PUSHER_KANAL_ID = 1427388722709663895
+MEDLEM_KANAL_ID = 1419003264690556999  # Ikke angivet, beholder gammel værdi
+PRIVAT_KATEGORI_ID = 1427389435720241183
+PUSHER_STATS_KANAL_ID = 1427388707807297556
+PUSHER_ROLLE_ID = 1427387819264835715
+ABSOLUT_ADMIN_ID = 356831538916098048
 
 # Database setup
 DATA_DIR = Path("/data") if Path("/data").exists() else Path(".")
@@ -40,13 +57,7 @@ DB_PATH = DATA_DIR / "pusher_bot.db"
 
 # Default permanent jobs
 DEFAULT_PERMANENT_JOBS = [
-    "🚗 Køre rundt og sælge stoffer",
-    "💰 Hjælpe med money wash",
-    "🏠 Hjælpe med hus raids",
-    "⚔️ Hjælpe med gang wars",
-    "📦 Hjælpe med leveringer",
-    "🔫 Hjælpe med våben handel",
-    "🎯 Hjælpe med contracts"
+
 ]
 
 def init_database():
@@ -474,9 +485,9 @@ class MedlemView(View):
 
     @discord.ui.button(label="➕ Opret Opgave", style=discord.ButtonStyle.primary, emoji="📝")
     async def opret_opgave(self, interaction: discord.Interaction, button: Button):
-        # Tjek om brugeren har medlem rollen
-        medlem_rolle = discord.utils.get(interaction.user.roles, id=MEDLEM_ROLLE_ID)
-        if not medlem_rolle:
+        # Tjek om brugeren har en af medlem rollerne
+        har_medlem_rolle = any(role.id in MEDLEM_ROLLE_IDS for role in interaction.user.roles)
+        if not har_medlem_rolle:
             await interaction.response.send_message("⛔ Du skal have medlem rollen for at oprette opgaver!", ephemeral=True)
             return
         
@@ -544,7 +555,7 @@ class OpretOpgaveModal(Modal):
 async def send_pusher_embed(kanal):
     """Send pusher embed med alle jobs"""
     embed = discord.Embed(
-        title="🎯 Vagos Pusher System",
+        title="🎯 Silent Devils MC Pusher System",
         description="**Oversigt over alle tilgængelige jobs og opgaver**",
         color=0xFFD700  # Guld farve
     )
@@ -572,7 +583,7 @@ async def send_pusher_embed(kanal):
         inline=False
     )
     
-    embed.set_footer(text="Vagos Pusher System v1.0")
+    embed.set_footer(text="Silent Devils MC Pusher System v1.0")
     embed.timestamp = datetime.now()
     
     # Send main embed (denne gemmes og opdateres ikke)
@@ -806,7 +817,7 @@ async def send_medlem_embed(kanal):
         inline=False
     )
     
-    embed.set_footer(text="Vagos Pusher System v1.0")
+    embed.set_footer(text="Silent Devils MC Pusher System v1.0")
     
     view = MedlemView()
     await kanal.send(embed=embed, view=view)
@@ -1030,7 +1041,7 @@ async def send_pusher_stats_embed(kanal):
             inline=False
         )
     
-    embed.set_footer(text="Vagos Pusher Stats v1.0")
+    embed.set_footer(text="Silent Devils MC Pusher Stats v1.0")
     embed.timestamp = datetime.now()
     
     # Send kun én embed (som på billedet)
@@ -1109,6 +1120,32 @@ class JobControlView(View):
         else:
             await interaction.response.send_message("⛔ Fejl ved færdiggørelse af job!", ephemeral=True)
 
+    @discord.ui.button(label="🔨 FORCE LUK", style=discord.ButtonStyle.secondary, emoji="⚠️")
+    async def force_close(self, interaction: discord.Interaction, button: Button):
+        # Tjek om brugeren er super admin
+        if interaction.user.id != ABSOLUT_ADMIN_ID:
+            await interaction.response.send_message("⛔ Kun super admin kan force-lukke tickets!", ephemeral=True)
+            return
+        
+        await interaction.response.send_message("⚠️ **FORCE LUK** - Kanalen lukkes om 5 sekunder af super admin...", ephemeral=False)
+        
+        # Marker job som cancelled hvis det stadig eksisterer
+        job = get_member_job_by_id(self.job_id)
+        if job and job["status"] != "faerdig":
+            update_member_job_status(self.job_id, "ledig")
+            
+            # Opdater pusher kanal
+            pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
+            if pusher_kanal:
+                await update_pusher_embed(pusher_kanal)
+        
+        # Slet kanalen efter 5 sekunder
+        await asyncio.sleep(5)
+        try:
+            await interaction.channel.delete()
+        except:
+            pass
+
 async def update_pusher_stats_embed(kanal):
     """Opdater pusher stats embed"""
     try:
@@ -1150,14 +1187,23 @@ async def handle_permanent_job(interaction, custom_id):
     
     # Find en admin til at koordinere med
     guild = interaction.guild
-    admin_role = discord.utils.get(guild.roles, id=ADMIN_ROLLE_ID)
+    admin_members = []
     
-    if not admin_role or not admin_role.members:
+    # Saml alle medlemmer med admin roller
+    for admin_role_id in ADMIN_ROLLE_IDS:
+        admin_role = discord.utils.get(guild.roles, id=admin_role_id)
+        if admin_role and admin_role.members:
+            admin_members.extend(admin_role.members)
+    
+    # Fjern duplikater
+    admin_members = list(set(admin_members))
+    
+    if not admin_members:
         await interaction.response.send_message("⛔ Ingen admins tilgængelige!", ephemeral=True)
         return
     
     # Tag første tilgængelige admin
-    admin_user = admin_role.members[0]
+    admin_user = admin_members[0]
     
     # Opret privat kanal
     try:
@@ -1230,7 +1276,6 @@ class PermanentJobView(View):
     async def close_channel(self, interaction: discord.Interaction, button: Button):
         # Tjek om brugeren er admin eller pusher i kanalen
         if not (tjek_admin_rolle(interaction.user) or 
-                any(role.id == ADMIN_ROLLE_ID for role in interaction.user.roles) or
                 interaction.channel.permissions_for(interaction.user).send_messages):
             await interaction.response.send_message("⛔ Du har ikke tilladelse til at lukke denne kanal!", ephemeral=True)
             return
@@ -1239,6 +1284,22 @@ class PermanentJobView(View):
         
         # Slet kanalen efter 10 sekunder
         await asyncio.sleep(10)
+        try:
+            await interaction.channel.delete()
+        except:
+            pass
+
+    @discord.ui.button(label="🔨 FORCE LUK", style=discord.ButtonStyle.secondary, emoji="⚠️")
+    async def force_close(self, interaction: discord.Interaction, button: Button):
+        # Tjek om brugeren er super admin
+        if interaction.user.id != ABSOLUT_ADMIN_ID:
+            await interaction.response.send_message("⛔ Kun super admin kan force-lukke tickets!", ephemeral=True)
+            return
+        
+        await interaction.response.send_message("⚠️ **FORCE LUK** - Kanalen lukkes om 5 sekunder af super admin...", ephemeral=False)
+        
+        # Slet kanalen efter 5 sekunder
+        await asyncio.sleep(5)
         try:
             await interaction.channel.delete()
         except:
@@ -1443,8 +1504,8 @@ class EditPermOpgaveSelect(Select):
         await interaction.response.send_modal(EditPermOpgaveModal(gammel_opgave))
 
 def tjek_admin_rolle(user):
-    """Tjek om brugeren har admin rollen"""
-    return any(role.id == ADMIN_ROLLE_ID for role in user.roles)
+    """Tjek om brugeren har admin rollen eller er absolut admin"""
+    return user.id == ABSOLUT_ADMIN_ID or any(role.id in ADMIN_ROLLE_IDS for role in user.roles)
 
 @bot.command(name="pusherbot")
 async def pusherbot_admin(ctx, action=None, subaction=None):

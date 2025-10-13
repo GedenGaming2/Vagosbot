@@ -54,7 +54,7 @@ Botten er konfigureret til følgende Discord IDs:
 - **Pusher rolle**: 1427387819264835715
 - **Pusher opgave kanal**: 1427388722709663895
 - **Pusher stats kanal**: 1427388707807297556
-- **Medlem kanal**: 1419003264690556999
+- **Medlem kanal**: 1427421512637349948
 - **Ticket kategori**: 1427389435720241183
 - **Absolut admin ID**: 356831538916098048
 
@@ -76,6 +76,7 @@ Administratorer med admin roller eller absolut admin ID kan administrere permane
 - `!pusherbot permopg add` - Tilføj ny permanent opgave
 - `!pusherbot permopg edit` - Rediger eksisterende opgave  
 - `!pusherbot permopg remove` - Fjern permanent opgave
+- `!pusherbot mopg del [nummer]` - Slet medlems opgave (admin)
 - `!admin_reset` - Nulstil alle jobs (kun admin)
 
 ### Admin Workflow:

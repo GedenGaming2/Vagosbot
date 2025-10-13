@@ -45,7 +45,7 @@ ADMIN_ROLLE_IDS = [
     1427380453257511072
 ]
 PUSHER_KANAL_ID = 1427388722709663895
-MEDLEM_KANAL_ID = 1419003264690556999  # Ikke angivet, beholder gammel værdi
+MEDLEM_KANAL_ID = 1427421512637349948
 PRIVAT_KATEGORI_ID = 1427389435720241183
 PUSHER_STATS_KANAL_ID = 1427388707807297556
 PUSHER_ROLLE_ID = 1427387819264835715
@@ -369,6 +369,55 @@ def get_member_job_by_id(job_id):
     except Exception as e:
         print(f"Fejl ved hentning af job: {e}")
         return None
+
+def get_member_job_by_number(job_number):
+    """Get specific member job by job number"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, titel, beskrivelse, belonning, oprettet_af, oprettet_navn, 
+                   status, pusher_id, pusher_navn, privat_kanal_id, oprettet_tid, 
+                   taget_tid, job_number
+            FROM member_jobs WHERE job_number = ?
+        """, (job_number,))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            return {
+                "id": row[0], "titel": row[1], "beskrivelse": row[2], "belonning": row[3],
+                "oprettet_af": row[4], "oprettet_navn": row[5], "status": row[6],
+                "pusher_id": row[7], "pusher_navn": row[8], "privat_kanal_id": row[9],
+                "oprettet_tid": row[10], "taget_tid": row[11], "job_number": row[12]
+            }
+        return None
+    except Exception as e:
+        print(f"Fejl ved hentning af job: {e}")
+        return None
+
+def delete_member_job_by_id(job_id):
+    """Delete a member job by ID and close its private channel if exists"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        # Get job info before deleting
+        cursor.execute("SELECT privat_kanal_id FROM member_jobs WHERE id = ?", (job_id,))
+        row = cursor.fetchone()
+        privat_kanal_id = row[0] if row else None
+        
+        # Delete the job
+        cursor.execute("DELETE FROM member_jobs WHERE id = ?", (job_id,))
+        
+        conn.commit()
+        success = cursor.rowcount > 0
+        conn.close()
+        
+        return success, privat_kanal_id
+    except Exception as e:
+        print(f"Fejl ved sletning af job: {e}")
+        return False, None
 
 @bot.event
 async def on_ready():
@@ -1508,7 +1557,7 @@ def tjek_admin_rolle(user):
     return user.id == ABSOLUT_ADMIN_ID or any(role.id in ADMIN_ROLLE_IDS for role in user.roles)
 
 @bot.command(name="pusherbot")
-async def pusherbot_admin(ctx, action=None, subaction=None):
+async def pusherbot_admin(ctx, action=None, subaction=None, *args):
     """Admin kommandoer til pusher bot"""
     
     # Tjek admin rolle
@@ -1531,14 +1580,79 @@ async def pusherbot_admin(ctx, action=None, subaction=None):
             ),
             inline=False
         )
+        embed.add_field(
+            name="📋 Medlems Opgaver",
+            value=(
+                "`!pusherbot mopg del [nummer]` - Slet medlems opgave"
+            ),
+            inline=False
+        )
         embed.set_footer(text="Kun administratorer kan bruge disse kommandoer")
         await ctx.send(embed=embed)
         return
     
-    if action.lower() != "permopg":
-        await ctx.send("⛔ Ukendt kommando! Brug `!pusherbot permopg [add/edit/remove]`")
+    if action.lower() not in ["permopg", "mopg"]:
+        await ctx.send("⛔ Ukendt kommando! Brug `!pusherbot permopg [add/edit/remove]` eller `!pusherbot mopg del [nummer]`")
         return
     
+    # Handle mopg (medlems opgaver) kommandoer
+    if action.lower() == "mopg":
+        if subaction is None or subaction.lower() != "del":
+            await ctx.send("⛔ Brug: `!pusherbot mopg del [nummer]`")
+            return
+        
+        # Tjek om der er angivet et nummer
+        if len(args) == 0:
+            await ctx.send("⛔ Du skal angive opgave nummeret! Brug: `!pusherbot mopg del [nummer]`")
+            return
+        
+        try:
+            job_number = int(args[0])
+        except ValueError:
+            await ctx.send("⛔ Ugyldigt nummer! Brug: `!pusherbot mopg del [nummer]`")
+            return
+        
+        # Find jobbet
+        job = get_member_job_by_number(job_number)
+        if not job:
+            await ctx.send(f"⛔ Ingen opgave fundet med nummer **{job_number}**!")
+            return
+        
+        # Slet jobbet
+        success, privat_kanal_id = delete_member_job_by_id(job["id"])
+        
+        if success:
+            # Luk privat kanal hvis den eksisterer
+            if privat_kanal_id:
+                privat_kanal = bot.get_channel(privat_kanal_id)
+                if privat_kanal:
+                    try:
+                        await privat_kanal.send("⚠️ **Denne opgave er blevet slettet af en administrator.**\nKanalen lukkes om 10 sekunder...")
+                        await asyncio.sleep(10)
+                        await privat_kanal.delete()
+                    except:
+                        pass
+            
+            # Opdater pusher kanal
+            pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
+            if pusher_kanal:
+                await update_pusher_embed(pusher_kanal)
+            
+            embed = discord.Embed(
+                title="✅ Opgave Slettet",
+                description=f"**Opgave #{job_number}** er blevet slettet",
+                color=0x00FF00
+            )
+            embed.add_field(name="Titel", value=job["titel"], inline=False)
+            embed.add_field(name="Oprettet af", value=job["oprettet_navn"], inline=True)
+            embed.add_field(name="Status", value=job["status"], inline=True)
+            await ctx.send(embed=embed)
+        else:
+            await ctx.send("⛔ Fejl ved sletning af opgave!")
+        
+        return
+    
+    # Handle permopg (permanente opgaver) kommandoer
     if subaction is None:
         embed = discord.Embed(
             title="🔧 Permanent Opgave Admin",

@@ -1816,6 +1816,12 @@ async def pusherbot_admin(ctx, action=None, subaction=None, *args):
         return
     
     if action is None:
+        # Slet kommandoen
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+        
         embed = discord.Embed(
             title="🔧 OFFSET MC Admin Kontrol Panel",
             description="**Kun synligt for administratorer**",
@@ -1840,7 +1846,7 @@ async def pusherbot_admin(ctx, action=None, subaction=None, *args):
         embed.set_footer(text="Kun administratorer kan se og bruge disse funktioner")
         
         admin_view = AdminControlView()
-        await ctx.send(embed=embed, view=admin_view)
+        await ctx.send(embed=embed, view=admin_view, ephemeral=True)
         return
     
     if action.lower() not in ["permopg", "mopg"]:

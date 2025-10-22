@@ -36,6 +36,9 @@ MEDLEM_ROLLE_IDS = [
     1427380624813064304,
     1427380609403191386
 ]
+
+# Logo URL - Erstat med dit rigtige logo URL
+LOGO_URL = "https://cdn.discordapp.com/attachments/1430349812439449620/1430351916210323548/OFFSET_NIGGER.png?ex=68f97687&is=68f82507&hm=95b7e2c4c89144e7f66b01a28ca2e7834787e8929f9490f7b056d78617311c0e&"
 ADMIN_ROLLE_IDS = [
     1427380609403191386,
     1427380624813064304,
@@ -48,7 +51,7 @@ PUSHER_KANAL_ID = 1427388722709663895
 MEDLEM_KANAL_ID = 1427421512637349948
 PRIVAT_KATEGORI_ID = 1427389435720241183
 PUSHER_STATS_KANAL_ID = 1427388707807297556
-PUSHER_ROLLE_ID = 1427387819264835715
+PUSHER_ROLLE_ID = 1430353400385507448
 ABSOLUT_ADMIN_ID = 356831538916098048
 
 # Database setup
@@ -543,6 +546,236 @@ class MedlemView(View):
         # Send modal
         await interaction.response.send_modal(OpretOpgaveModal())
 
+class AdminControlView(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="➕ Tilføj Permanent Opgave", style=discord.ButtonStyle.primary, emoji="🔄")
+    async def add_permanent_job(self, interaction: discord.Interaction, button: Button):
+        if not tjek_admin_rolle(interaction.user):
+            await interaction.response.send_message("⛔ Kun admins kan bruge denne funktion!", ephemeral=True)
+            return
+        
+        await interaction.response.send_modal(AddPermOpgaveModal())
+
+    @discord.ui.button(label="✏️ Rediger Permanent Opgave", style=discord.ButtonStyle.secondary, emoji="📝")
+    async def edit_permanent_job(self, interaction: discord.Interaction, button: Button):
+        if not tjek_admin_rolle(interaction.user):
+            await interaction.response.send_message("⛔ Kun admins kan bruge denne funktion!", ephemeral=True)
+            return
+        
+        permanent_jobs = get_permanent_jobs()
+        if not permanent_jobs:
+            await interaction.response.send_message("⛔ Ingen permanente opgaver at redigere!", ephemeral=True)
+            return
+        
+        view = View()
+        view.add_item(EditPermOpgaveSelect())
+        await interaction.response.send_message("Vælg opgave at redigere:", view=view, ephemeral=True)
+
+    @discord.ui.button(label="🗑️ Fjern Permanent Opgave", style=discord.ButtonStyle.danger, emoji="❌")
+    async def remove_permanent_job(self, interaction: discord.Interaction, button: Button):
+        if not tjek_admin_rolle(interaction.user):
+            await interaction.response.send_message("⛔ Kun admins kan bruge denne funktion!", ephemeral=True)
+            return
+        
+        permanent_jobs = get_permanent_jobs()
+        if not permanent_jobs:
+            await interaction.response.send_message("⛔ Ingen permanente opgaver at fjerne!", ephemeral=True)
+            return
+        
+        view = View()
+        view.add_item(RemovePermOpgaveSelect())
+        await interaction.response.send_message("Vælg opgave at fjerne:", view=view, ephemeral=True)
+
+    @discord.ui.button(label="📋 Slet Medlemsopgave", style=discord.ButtonStyle.danger, emoji="🗑️")
+    async def delete_member_job(self, interaction: discord.Interaction, button: Button):
+        if not tjek_admin_rolle(interaction.user):
+            await interaction.response.send_message("⛔ Kun admins kan bruge denne funktion!", ephemeral=True)
+            return
+        
+        # Send modal til at indtaste job nummer
+        await interaction.response.send_modal(DeleteMemberJobModal())
+
+    @discord.ui.button(label="🔄 Opdater Stats", style=discord.ButtonStyle.success, emoji="📊")
+    async def refresh_stats(self, interaction: discord.Interaction, button: Button):
+        if not tjek_admin_rolle(interaction.user):
+            await interaction.response.send_message("⛔ Kun admins kan bruge denne funktion!", ephemeral=True)
+            return
+        
+        try:
+            stats_kanal = bot.get_channel(PUSHER_STATS_KANAL_ID)
+            if stats_kanal:
+                await update_pusher_stats_embed(stats_kanal)
+                await interaction.response.send_message("✅ Pusher statistikker er blevet opdateret!", ephemeral=True)
+            else:
+                await interaction.response.send_message("⛔ Stats kanal ikke fundet!", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"⛔ Fejl ved opdatering: {e}", ephemeral=True)
+
+    @discord.ui.button(label="🔄 Opdater Pusher Kanal", style=discord.ButtonStyle.success, emoji="🎯")
+    async def refresh_pusher_channel(self, interaction: discord.Interaction, button: Button):
+        if not tjek_admin_rolle(interaction.user):
+            await interaction.response.send_message("⛔ Kun admins kan bruge denne funktion!", ephemeral=True)
+            return
+        
+        try:
+            pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
+            if pusher_kanal:
+                await update_pusher_embed(pusher_kanal)
+                await interaction.response.send_message("✅ Pusher kanal er blevet opdateret!", ephemeral=True)
+            else:
+                await interaction.response.send_message("⛔ Pusher kanal ikke fundet!", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"⛔ Fejl ved opdatering: {e}", ephemeral=True)
+
+    @discord.ui.button(label="🔄 Opdater Medlem Kanal", style=discord.ButtonStyle.success, emoji="📝")
+    async def refresh_member_channel(self, interaction: discord.Interaction, button: Button):
+        if not tjek_admin_rolle(interaction.user):
+            await interaction.response.send_message("⛔ Kun admins kan bruge denne funktion!", ephemeral=True)
+            return
+        
+        try:
+            medlem_kanal = bot.get_channel(MEDLEM_KANAL_ID)
+            if medlem_kanal:
+                await setup_medlem_kanal()
+                await interaction.response.send_message("✅ Medlem kanal er blevet opdateret!", ephemeral=True)
+            else:
+                await interaction.response.send_message("⛔ Medlem kanal ikke fundet!", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"⛔ Fejl ved opdatering: {e}", ephemeral=True)
+
+    @discord.ui.button(label="🔄 Opdater Alle Kanaler", style=discord.ButtonStyle.success, emoji="🔄")
+    async def refresh_all_channels(self, interaction: discord.Interaction, button: Button):
+        if not tjek_admin_rolle(interaction.user):
+            await interaction.response.send_message("⛔ Kun admins kan bruge denne funktion!", ephemeral=True)
+            return
+        
+        try:
+            # Opdater alle kanaler
+            await setup_pusher_kanal()
+            await setup_medlem_kanal()
+            await setup_pusher_stats_kanal()
+            await interaction.response.send_message("✅ Alle kanaler er blevet opdateret!", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"⛔ Fejl ved opdatering: {e}", ephemeral=True)
+
+    @discord.ui.button(label="⚠️ NULSTIL SYSTEM", style=discord.ButtonStyle.danger, emoji="🗑️")
+    async def reset_system(self, interaction: discord.Interaction, button: Button):
+        if not tjek_admin_rolle(interaction.user):
+            await interaction.response.send_message("⛔ Kun admins kan bruge denne funktion!", ephemeral=True)
+            return
+        
+        # Send bekræftelses modal
+        await interaction.response.send_modal(ResetSystemModal())
+
+class DeleteMemberJobModal(Modal):
+    def __init__(self):
+        super().__init__(title="🗑️ Slet Medlemsopgave")
+        
+        self.job_number = TextInput(
+            label="Opgave Nummer",
+            placeholder="Indtast opgave nummeret...",
+            required=True,
+            max_length=10
+        )
+        
+        self.add_item(self.job_number)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            job_number = int(self.job_number.value)
+        except ValueError:
+            await interaction.response.send_message("⛔ Ugyldigt nummer! Indtast et gyldigt tal.", ephemeral=True)
+            return
+        
+        # Find jobbet
+        job = get_member_job_by_number(job_number)
+        if not job:
+            await interaction.response.send_message(f"⛔ Ingen opgave fundet med nummer **{job_number}**!", ephemeral=True)
+            return
+        
+        # Slet jobbet
+        success, privat_kanal_id = delete_member_job_by_id(job["id"])
+        
+        if success:
+            # Luk privat kanal hvis den eksisterer (uden at sende besked)
+            if privat_kanal_id:
+                privat_kanal = bot.get_channel(privat_kanal_id)
+                if privat_kanal:
+                    try:
+                        await asyncio.sleep(2)  # Kort pause før kanalen lukkes
+                        await privat_kanal.delete()
+                    except:
+                        pass
+            
+            # Opdater pusher kanal
+            pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
+            if pusher_kanal:
+                await update_pusher_embed(pusher_kanal)
+            
+            embed = discord.Embed(
+                title="✅ Opgave Slettet",
+                description=f"**Opgave #{job_number}** er blevet slettet",
+                color=0x00FF00
+            )
+            embed.add_field(name="Titel", value=job["titel"], inline=False)
+            embed.add_field(name="Oprettet af", value=job["oprettet_navn"], inline=True)
+            embed.add_field(name="Status", value=job["status"], inline=True)
+            embed.set_thumbnail(url=LOGO_URL)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        else:
+            await interaction.response.send_message("⛔ Fejl ved sletning af opgave!", ephemeral=True)
+
+class ResetSystemModal(Modal):
+    def __init__(self):
+        super().__init__(title="⚠️ NULSTIL SYSTEM")
+        
+        self.confirmation = TextInput(
+            label="Bekræftelse",
+            placeholder="Skriv 'NULSTIL' for at bekræfte...",
+            required=True,
+            max_length=10
+        )
+        
+        self.add_item(self.confirmation)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if self.confirmation.value.upper() != "NULSTIL":
+            await interaction.response.send_message("⛔ Bekræftelse fejlede! Skriv 'NULSTIL' for at bekræfte.", ephemeral=True)
+            return
+        
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            
+            # Clear all tables except permanent_jobs
+            cursor.execute("DELETE FROM member_jobs")
+            cursor.execute("DELETE FROM completed_jobs")
+            cursor.execute("DELETE FROM pusher_stats")
+            cursor.execute("UPDATE settings SET value = '1' WHERE key = 'job_counter'")
+            
+            conn.commit()
+            conn.close()
+            
+            # Opdater kanaler
+            await setup_pusher_kanal()
+            await setup_medlem_kanal()
+            await setup_pusher_stats_kanal()
+            
+            embed = discord.Embed(
+                title="✅ System Nulstillet",
+                description="Alle jobs og statistikker er blevet nulstillet!",
+                color=0x00FF00
+            )
+            embed.set_thumbnail(url=LOGO_URL)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            
+        except Exception as e:
+            await interaction.response.send_message(f"⛔ Fejl ved nulstilling: {e}", ephemeral=True)
+
+
+
 class OpretOpgaveModal(Modal):
     def __init__(self):
         super().__init__(title="📝 Opret Ny Opgave")
@@ -604,10 +837,11 @@ class OpretOpgaveModal(Modal):
 async def send_pusher_embed(kanal):
     """Send pusher embed med alle jobs"""
     embed = discord.Embed(
-        title="🎯 Silent Devils MC Pusher System",
+        title="🎯 OFFSET MC Pusher System",
         description="**Oversigt over alle tilgængelige jobs og opgaver**",
         color=0xFFD700  # Guld farve
     )
+    embed.set_thumbnail(url=LOGO_URL)
     
     # Permanente opgaver
     permanent_jobs = get_permanent_jobs()
@@ -632,7 +866,7 @@ async def send_pusher_embed(kanal):
         inline=False
     )
     
-    embed.set_footer(text="Silent Devils MC Pusher System v1.0")
+    embed.set_footer(text="OFFSET MC Pusher System v1.0")
     embed.timestamp = datetime.now()
     
     # Send main embed (denne gemmes og opdateres ikke)
@@ -844,6 +1078,7 @@ async def send_medlem_embed(kanal):
         description="**Har du brug for hjælp fra vores pusherne?**",
         color=0x5865F2  # Discord blå
     )
+    embed.set_thumbnail(url=LOGO_URL)
     
     embed.add_field(
         name="🎯 Sådan fungerer det",
@@ -866,7 +1101,7 @@ async def send_medlem_embed(kanal):
         inline=False
     )
     
-    embed.set_footer(text="Silent Devils MC Pusher System v1.0")
+    embed.set_footer(text="OFFSET MC Pusher System v1.0")
     
     view = MedlemView()
     await kanal.send(embed=embed, view=view)
@@ -1042,6 +1277,7 @@ async def send_pusher_stats_embed(kanal):
         description="**Oversigt over alle pusherne og deres færdiggjorte jobs**",
         color=0x00FF00
     )
+    embed.set_thumbnail(url=LOGO_URL)
     
     # Get pusher stats kun for folk med pusher rollen lige nu
     pusher_stats = get_current_pusher_stats(kanal.guild)
@@ -1090,7 +1326,7 @@ async def send_pusher_stats_embed(kanal):
             inline=False
         )
     
-    embed.set_footer(text="Silent Devils MC Pusher Stats v1.0")
+    embed.set_footer(text="OFFSET MC Pusher Stats v1.0")
     embed.timestamp = datetime.now()
     
     # Send kun én embed (som på billedet)
@@ -1567,28 +1803,30 @@ async def pusherbot_admin(ctx, action=None, subaction=None, *args):
     
     if action is None:
         embed = discord.Embed(
-            title="🔧 Pusher Bot Admin",
-            description="**Tilgængelige kommandoer:**",
+            title="🔧 OFFSET MC Admin Kontrol Panel",
+            description="**Kun synligt for administratorer**",
             color=0xFF5733
         )
+        embed.set_thumbnail(url=LOGO_URL)
         embed.add_field(
-            name="📝 Permanent Opgaver",
-            value=(
-                "`!pusherbot permopg add` - Tilføj ny permanent opgave\n"
-                "`!pusherbot permopg edit` - Rediger eksisterende opgave\n"
-                "`!pusherbot permopg remove` - Fjern permanent opgave"
-            ),
+            name="🔄 Permanente Opgaver",
+            value="Tilføj, rediger eller fjern permanente opgaver",
             inline=False
         )
         embed.add_field(
-            name="📋 Medlems Opgaver",
-            value=(
-                "`!pusherbot mopg del [nummer]` - Slet medlems opgave"
-            ),
+            name="📋 Medlemsopgaver",
+            value="Slet medlemsopgaver og opdater kanaler",
             inline=False
         )
-        embed.set_footer(text="Kun administratorer kan bruge disse kommandoer")
-        await ctx.send(embed=embed)
+        embed.add_field(
+            name="🔄 System Opdateringer",
+            value="Opdater stats, kanaler eller nulstil systemet",
+            inline=False
+        )
+        embed.set_footer(text="Kun administratorer kan se og bruge disse funktioner")
+        
+        admin_view = AdminControlView()
+        await ctx.send(embed=embed, view=admin_view)
         return
     
     if action.lower() not in ["permopg", "mopg"]:
@@ -1622,13 +1860,12 @@ async def pusherbot_admin(ctx, action=None, subaction=None, *args):
         success, privat_kanal_id = delete_member_job_by_id(job["id"])
         
         if success:
-            # Luk privat kanal hvis den eksisterer
+            # Luk privat kanal hvis den eksisterer (uden at sende besked)
             if privat_kanal_id:
                 privat_kanal = bot.get_channel(privat_kanal_id)
                 if privat_kanal:
                     try:
-                        await privat_kanal.send("⚠️ **Denne opgave er blevet slettet af en administrator.**\nKanalen lukkes om 10 sekunder...")
-                        await asyncio.sleep(10)
+                        await asyncio.sleep(2)  # Kort pause før kanalen lukkes
                         await privat_kanal.delete()
                     except:
                         pass

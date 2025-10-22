@@ -1,4 +1,4 @@
-# Silent Devils MC Pusher Bot
+# OFFSET MC Pusher Bot
 
 En Discord bot til at koordinere pusher-jobs mellem medlemmer og pusherne i banden.
 

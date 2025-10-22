@@ -426,6 +426,20 @@ def delete_member_job_by_id(job_id):
 async def on_ready():
     print(f"Pusher Bot er online som {bot.user}")
     
+    # Set bot avatar/logo
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            async with session.get(LOGO_URL) as response:
+                if response.status == 200:
+                    avatar_data = await response.read()
+                    await bot.user.edit(avatar=avatar_data)
+                    print("✅ Bot avatar opdateret med OFFSET MC logo")
+                else:
+                    print("⚠️ Kunne ikke hente logo til bot avatar")
+    except Exception as e:
+        print(f"⚠️ Fejl ved opdatering af bot avatar: {e}")
+    
     # Initialize database
     init_database()
     

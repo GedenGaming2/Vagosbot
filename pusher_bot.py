@@ -1813,14 +1813,20 @@ def tjek_admin_rolle(user):
     """Tjek om brugeren har admin rollen eller er absolut admin"""
     return user.id == ABSOLUT_ADMIN_ID or any(role.id in ADMIN_ROLLE_IDS for role in user.roles)
 
-@bot.tree.command(name="pusherbot", description="OFFSET MC Admin Kontrol Panel")
-async def pusherbot_admin(interaction: discord.Interaction):
+@bot.command(name="pusherbot")
+async def pusherbot_admin(ctx):
     """Admin kommandoer til pusher bot"""
     
     # Tjek admin rolle
-    if not tjek_admin_rolle(interaction.user):
-        await interaction.response.send_message("⛔ Du har ikke tilladelse til at bruge admin kommandoer!", ephemeral=True)
+    if not tjek_admin_rolle(ctx.author):
+        await ctx.send("⛔ Du har ikke tilladelse til at bruge admin kommandoer!")
         return
+    
+    # Slet kommandoen
+    try:
+        await ctx.message.delete()
+    except:
+        pass
     
     embed = discord.Embed(
         title="🔧 OFFSET MC Admin Kontrol Panel",
@@ -1846,7 +1852,7 @@ async def pusherbot_admin(interaction: discord.Interaction):
     embed.set_footer(text="Kun du kan se denne.")
     
     admin_view = AdminControlView()
-    await interaction.response.send_message(embed=embed, view=admin_view, ephemeral=True)
+    await ctx.send(embed=embed, view=admin_view)
 
 @bot.command(name="pusherbot_old")
 async def pusherbot_admin_old(ctx, action=None, subaction=None, *args):

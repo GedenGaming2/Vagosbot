@@ -440,13 +440,6 @@ async def on_ready():
     except Exception as e:
         print(f"⚠️ Fejl ved opdatering af bot avatar: {e}")
     
-    # Sync slash commands
-    try:
-        synced = await bot.tree.sync()
-        print(f"✅ Synced {len(synced)} slash commands")
-    except Exception as e:
-        print(f"❌ Failed to sync slash commands: {e}")
-    
     # Initialize database
     init_database()
     
@@ -1813,40 +1806,49 @@ def tjek_admin_rolle(user):
     """Tjek om brugeren har admin rollen eller er absolut admin"""
     return user.id == ABSOLUT_ADMIN_ID or any(role.id in ADMIN_ROLLE_IDS for role in user.roles)
 
-@bot.tree.command(name="pusherbot", description="OFFSET MC Admin Kontrol Panel")
-async def pusherbot_admin(interaction: discord.Interaction):
+@bot.command(name="pusherbot")
+async def pusherbot_admin(ctx, action=None, subaction=None, *args):
     """Admin kommandoer til pusher bot"""
     
     # Tjek admin rolle
-    if not tjek_admin_rolle(interaction.user):
-        await interaction.response.send_message("⛔ Du har ikke tilladelse til at bruge admin kommandoer!", ephemeral=True)
+    if not tjek_admin_rolle(ctx.author):
+        await ctx.send("⛔ Du har ikke tilladelse til at bruge admin kommandoer!")
         return
     
-    embed = discord.Embed(
-        title="🔧 OFFSET MC Admin Kontrol Panel",
-        description="**Kun synligt for administratorer**",
-        color=0xFF5733
-    )
-    embed.set_thumbnail(url=LOGO_URL)
-    embed.add_field(
-        name="🔄 Permanente Opgaver",
-        value="Tilføj, rediger eller fjern permanente opgaver",
-        inline=False
-    )
-    embed.add_field(
-        name="📋 Medlemsopgaver",
-        value="Slet medlemsopgaver og opdater kanaler",
-        inline=False
-    )
-    embed.add_field(
-        name="🔄 System Opdateringer",
-        value="Opdater stats, kanaler eller nulstil systemet",
-        inline=False
-    )
-    embed.set_footer(text="Kun du kan se denne.")
-    
-    admin_view = AdminControlView()
-    await interaction.response.send_message(embed=embed, view=admin_view, ephemeral=True)
+    if action is None:
+        # Slet kommandoen
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+        
+        embed = discord.Embed(
+            title="🔧 OFFSET MC Admin Kontrol Panel",
+            description="**Kun synligt for administratorer**",
+            color=0xFF5733
+        )
+        embed.set_thumbnail(url=LOGO_URL)
+        embed.add_field(
+            name="🔄 Permanente Opgaver",
+            value="Tilføj, rediger eller fjern permanente opgaver",
+            inline=False
+        )
+        embed.add_field(
+            name="📋 Medlemsopgaver",
+            value="Slet medlemsopgaver og opdater kanaler",
+            inline=False
+        )
+        embed.add_field(
+            name="🔄 System Opdateringer",
+            value="Opdater stats, kanaler eller nulstil systemet",
+            inline=False
+        )
+        embed.set_footer(text="Kun du kan se denne.")
+        
+        admin_view = AdminControlView()
+        # Send som privat besked til adminen
+        await ctx.author.send(embed=embed, view=admin_view)
+        return
 
 @bot.command(name="pusherbot_old")
 async def pusherbot_admin_old(ctx, action=None, subaction=None, *args):

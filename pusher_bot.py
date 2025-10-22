@@ -1843,10 +1843,11 @@ async def pusherbot_admin(ctx, action=None, subaction=None, *args):
             value="Opdater stats, kanaler eller nulstil systemet",
             inline=False
         )
-        embed.set_footer(text="Kun administratorer kan se og bruge disse funktioner")
+        embed.set_footer(text="Kun du kan se denne.")
         
         admin_view = AdminControlView()
-        await ctx.send(embed=embed, view=admin_view, ephemeral=True)
+        # Send som privat besked til adminen
+        await ctx.author.send(embed=embed, view=admin_view)
         return
     
     if action.lower() not in ["permopg", "mopg"]:

@@ -1369,19 +1369,34 @@ async def send_markbetalinger_embed(kanal):
     if betalinger:
         # Opret liste format ligesom pusher stats
         betalingsliste_text = "```\n"
+        nu_tid = datetime.now()
         for betaling in betalinger:
             navn_padded = betaling["navn"][:20].ljust(20)
             telefon_padded = betaling["telefon"][:15].ljust(15)
             tidsperiode = betaling["tidsperiode"]
             
-            # Formater udløbsdato
+            # Beregn nedtælling (tid tilbage)
             if betaling["udlobsdato"]:
                 udlobs_dato = datetime.strptime(betaling["udlobsdato"], "%Y-%m-%d %H:%M:%S")
-                udlobs_str = udlobs_dato.strftime("%d/%m %H:%M")
+                tid_tilbage = udlobs_dato - nu_tid
+                
+                if tid_tilbage.total_seconds() <= 0:
+                    nedtaelling = "Udløbet"
+                else:
+                    dage = tid_tilbage.days
+                    timer, rest = divmod(tid_tilbage.seconds, 3600)
+                    minutter, _ = divmod(rest, 60)
+                    
+                    if dage > 0:
+                        nedtaelling = f"{dage}d {timer}t"
+                    elif timer > 0:
+                        nedtaelling = f"{timer}t {minutter}m"
+                    else:
+                        nedtaelling = f"{minutter}m"
             else:
-                udlobs_str = "Ukendt"
+                nedtaelling = "Ukendt"
             
-            betalingsliste_text += f"{navn_padded} {telefon_padded} {tidsperiode:<10} {udlobs_str}\n"
+            betalingsliste_text += f"{navn_padded} {telefon_padded} {tidsperiode:<10} {nedtaelling}\n"
         betalingsliste_text += "```"
         
         embed.add_field(
@@ -2293,15 +2308,21 @@ async def admin_reset(ctx):
 
 @tasks.loop(minutes=5)  # Tjek hver 5. minut som backup
 async def periodic_stats_check():
-    """Periodisk tjek af pusher stats som backup til events"""
+    """Periodisk tjek af pusher stats og markbetalinger som backup til events"""
     try:
         stats_kanal = bot.get_channel(PUSHER_STATS_KANAL_ID)
         if stats_kanal:
             # Stille opdatering uden at spamme logs
             await update_pusher_stats_embed(stats_kanal)
-            print("🔄 Periodisk stats check udført")
+        
+        # Opdater også markbetalinger embed for at opdatere nedtællingen
+        markbetalinger_kanal = bot.get_channel(MARKBETALINGS_KANAL_ID)
+        if markbetalinger_kanal:
+            await update_markbetalinger_embed(markbetalinger_kanal)
+        
+        print("🔄 Periodisk stats og markbetalinger check udført")
     except Exception as e:
-        print(f"Fejl ved periodisk stats check: {e}")
+        print(f"Fejl ved periodisk check: {e}")
 
 @periodic_stats_check.before_loop
 async def before_periodic_check():

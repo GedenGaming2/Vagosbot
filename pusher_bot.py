@@ -741,13 +741,13 @@ class TilføjBetalingModal(Modal):
 async def update_markbetalinger_embed(kanal):
     """Opdater markbetalinger embed"""
     try:
-        # Hent alle beskeder i kanalen
+        # Hent alle beskeder i kanalen fra botten
         messages = []
-        async for message in kanal.history(limit=10):
-            if message.author == bot.user and message.embeds:
+        async for message in kanal.history(limit=50):
+            if message.author == bot.user and (message.embeds or message.components):
                 messages.append(message)
         
-        # Slet alle embed beskeder
+        # Slet alle embed/component beskeder fra botten
         for message in messages:
             try:
                 await message.delete()
@@ -1356,21 +1356,55 @@ async def setup_markbetalinger_kanal():
 
 async def send_markbetalinger_embed(kanal):
     """Send markbetalinger embed med liste over betalinger"""
-    embed = discord.Embed(
+    # Send hoved-embed først med knap
+    main_embed = discord.Embed(
         title="💳 Markbetalinger System",
         description="**Oversigt over alle markbetalinger**",
         color=0x00FF00
     )
-    embed.set_thumbnail(url=LOGO_URL)
+    main_embed.set_thumbnail(url=LOGO_URL)
+    main_embed.add_field(
+        name="ℹ️ Information",
+        value="Tryk på knappen nedenfor for at tilføje en ny betaling.",
+        inline=False
+    )
+    main_embed.set_footer(text="OFFSET MC Markbetalinger System v1.0")
+    main_embed.timestamp = datetime.now()
+    
+    view = MarkbetalingView()
+    await kanal.send(embed=main_embed, view=view)
     
     # Hent alle betalinger
     betalinger = get_markbetalinger()
     
-    if betalinger:
-        # Opret liste format ligesom pusher stats
+    if not betalinger:
+        # Send tom liste besked
+        empty_embed = discord.Embed(
+            title="📋 Betalingsliste",
+            description="```\nIngen betalinger registreret endnu\n```",
+            color=0x00FF00
+        )
+        await kanal.send(embed=empty_embed)
+        return
+    
+    # Send betalingsliste opdelt i sektioner hvis nødvendigt
+    await send_markbetalinger_sections(kanal, betalinger)
+
+async def send_markbetalinger_sections(kanal, betalinger):
+    """Send markbetalinger opdelt i sektioner for at undgå Discord limits"""
+    # Discord field value limit er 1024 tegn
+    # Hver betaling linje er ca 60-70 tegn, så vi kan have ca 15-17 per sektion
+    BETALINGER_PER_SECTION = 15
+    nu_tid = datetime.now()
+    
+    # Opdel betalinger i grupper
+    for i in range(0, len(betalinger), BETALINGER_PER_SECTION):
+        section_betalinger = betalinger[i:i + BETALINGER_PER_SECTION]
+        section_number = (i // BETALINGER_PER_SECTION) + 1
+        
+        # Opret liste format
         betalingsliste_text = "```\n"
-        nu_tid = datetime.now()
-        for betaling in betalinger:
+        for betaling in section_betalinger:
             navn_padded = betaling["navn"][:20].ljust(20)
             telefon_padded = betaling["telefon"][:15].ljust(15)
             tidsperiode = betaling["tidsperiode"]
@@ -1399,29 +1433,15 @@ async def send_markbetalinger_embed(kanal):
             betalingsliste_text += f"{navn_padded} {telefon_padded} {tidsperiode:<10} {nedtaelling}\n"
         betalingsliste_text += "```"
         
-        embed.add_field(
-            name="📋 Betalingsliste",
-            value=betalingsliste_text,
-            inline=False
+        # Opret embed for denne sektion
+        title = f"📋 Betalingsliste (Del {section_number})" if len(betalinger) > BETALINGER_PER_SECTION else "📋 Betalingsliste"
+        section_embed = discord.Embed(
+            title=title,
+            description=betalingsliste_text,
+            color=0x00FF00
         )
-    else:
-        embed.add_field(
-            name="📋 Betalingsliste",
-            value="```\nIngen betalinger registreret endnu\n```",
-            inline=False
-        )
-    
-    embed.add_field(
-        name="ℹ️ Information",
-        value="Tryk på knappen nedenfor for at tilføje en ny betaling.",
-        inline=False
-    )
-    
-    embed.set_footer(text="OFFSET MC Markbetalinger System v1.0")
-    embed.timestamp = datetime.now()
-    
-    view = MarkbetalingView()
-    await kanal.send(embed=embed, view=view)
+        
+        await kanal.send(embed=section_embed)
 
 def get_pusher_stats():
     """Get pusher statistics from database"""

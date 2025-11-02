@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 import discord
 from discord.ext import commands, tasks
 from discord.ui import Button, View, Modal, TextInput, Select
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import asyncio
 import sqlite3
@@ -53,6 +53,7 @@ PRIVAT_KATEGORI_ID = 1427389435720241183
 PUSHER_STATS_KANAL_ID = 1427388707807297556
 PUSHER_ROLLE_ID = 1430353400385507448
 ABSOLUT_ADMIN_ID = 356831538916098048
+MARKBETALINGS_KANAL_ID = 1434546263528968273
 
 # Database setup
 DATA_DIR = Path("/data") if Path("/data").exists() else Path(".")
@@ -127,6 +128,19 @@ def init_database():
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS markbetalinger (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                navn TEXT NOT NULL,
+                telefon TEXT NOT NULL,
+                tidsperiode TEXT NOT NULL,
+                betalingsdato TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                udlobsdato TIMESTAMP,
+                oprettet_af INTEGER NOT NULL,
+                oprettet_navn TEXT NOT NULL
             )
         ''')
         
@@ -422,6 +436,72 @@ def delete_member_job_by_id(job_id):
         print(f"Fejl ved sletning af job: {e}")
         return False, None
 
+def get_markbetalinger():
+    """Get all markbetalinger from database"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, navn, telefon, tidsperiode, betalingsdato, udlobsdato, 
+                   oprettet_af, oprettet_navn
+            FROM markbetalinger 
+            ORDER BY betalingsdato DESC
+        """)
+        betalinger = []
+        for row in cursor.fetchall():
+            betaling = {
+                "id": row[0], "navn": row[1], "telefon": row[2], 
+                "tidsperiode": row[3], "betalingsdato": row[4], 
+                "udlobsdato": row[5], "oprettet_af": row[6], 
+                "oprettet_navn": row[7]
+            }
+            betalinger.append(betaling)
+        conn.close()
+        return betalinger
+    except Exception as e:
+        print(f"Fejl ved hentning af markbetalinger: {e}")
+        return []
+
+def add_markbetaling(betaling_data):
+    """Add markbetaling to database"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        # Beregn udløbsdato baseret på tidsperiode
+        betalingsdato = datetime.now()
+        tidsperiode = betaling_data["tidsperiode"]
+        
+        if tidsperiode == "24 timer":
+            udlobsdato = betalingsdato + timedelta(days=1)
+        elif tidsperiode == "3 døgn":
+            udlobsdato = betalingsdato + timedelta(days=3)
+        elif tidsperiode == "1 uge":
+            udlobsdato = betalingsdato + timedelta(days=7)
+        else:
+            udlobsdato = betalingsdato + timedelta(days=1)  # Default
+        
+        cursor.execute("""
+            INSERT INTO markbetalinger 
+            (navn, telefon, tidsperiode, betalingsdato, udlobsdato, oprettet_af, oprettet_navn)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            betaling_data["navn"], 
+            betaling_data["telefon"],
+            betaling_data["tidsperiode"],
+            betalingsdato.strftime("%Y-%m-%d %H:%M:%S"),
+            udlobsdato.strftime("%Y-%m-%d %H:%M:%S"),
+            betaling_data["oprettet_af"],
+            betaling_data["oprettet_navn"]
+        ))
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Fejl ved tilføjelse af markbetaling: {e}")
+        return False
+
 @bot.event
 async def on_ready():
     print(f"Pusher Bot er online som {bot.user}")
@@ -454,6 +534,7 @@ async def on_ready():
     await setup_pusher_kanal()
     await setup_medlem_kanal()
     await setup_pusher_stats_kanal()
+    await setup_markbetalinger_kanal()
     
     # Start periodisk check som backup
     periodic_stats_check.start()
@@ -566,6 +647,118 @@ class MedlemView(View):
         
         # Send modal
         await interaction.response.send_modal(OpretOpgaveModal())
+
+class MarkbetalingView(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="➕ Tilføj Betaling", style=discord.ButtonStyle.primary, emoji="💳")
+    async def tilfoej_betaling(self, interaction: discord.Interaction, button: Button):
+        # Tjek om brugeren har en af medlem rollerne
+        har_medlem_rolle = any(role.id in MEDLEM_ROLLE_IDS for role in interaction.user.roles)
+        if not har_medlem_rolle:
+            await interaction.response.send_message("⛔ Du skal have medlem rollen for at tilføje betalinger!", ephemeral=True)
+            return
+        
+        # Send modal med select menu for tidsperiode
+        view = View(timeout=None)
+        select = TidsperiodeSelect()
+        view.add_item(select)
+        
+        # Send view først, så brugeren kan vælge tidsperiode
+        await interaction.response.send_message(
+            "**Vælg tidsperiode:**",
+            view=view,
+            ephemeral=True
+        )
+
+class TidsperiodeSelect(Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(
+                label="24 timer",
+                value="24 timer",
+                description="Betaling gælder i 24 timer"
+            ),
+            discord.SelectOption(
+                label="3 døgn",
+                value="3 døgn",
+                description="Betaling gælder i 3 døgn"
+            ),
+            discord.SelectOption(
+                label="1 uge",
+                value="1 uge",
+                description="Betaling gælder i 1 uge"
+            )
+        ]
+        super().__init__(placeholder="Vælg tidsperiode...", options=options, max_values=1)
+
+    async def callback(self, interaction: discord.Interaction):
+        # Send modal med navn og telefon
+        await interaction.response.send_modal(TilføjBetalingModal(self.values[0]))
+
+class TilføjBetalingModal(Modal):
+    def __init__(self, tidsperiode):
+        super().__init__(title="💳 Tilføj Betaling")
+        self.tidsperiode = tidsperiode
+        
+        self.navn = TextInput(
+            label="Navn",
+            placeholder="Indtast navn på personen der har betalt...",
+            required=True,
+            max_length=100
+        )
+        
+        self.telefon = TextInput(
+            label="Telefonnummer",
+            placeholder="Indtast telefonnummer...",
+            required=True,
+            max_length=20
+        )
+        
+        self.add_item(self.navn)
+        self.add_item(self.telefon)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        betaling_data = {
+            "navn": self.navn.value,
+            "telefon": self.telefon.value,
+            "tidsperiode": self.tidsperiode,
+            "oprettet_af": interaction.user.id,
+            "oprettet_navn": interaction.user.display_name
+        }
+        
+        if add_markbetaling(betaling_data):
+            await interaction.response.send_message("✅ Betaling er blevet tilføjet!", ephemeral=True)
+            
+            # Opdater markbetalinger kanal
+            kanal = bot.get_channel(MARKBETALINGS_KANAL_ID)
+            if kanal:
+                await update_markbetalinger_embed(kanal)
+        else:
+            await interaction.response.send_message("⛔ Fejl ved tilføjelse af betaling!", ephemeral=True)
+
+async def update_markbetalinger_embed(kanal):
+    """Opdater markbetalinger embed"""
+    try:
+        # Hent alle beskeder i kanalen
+        messages = []
+        async for message in kanal.history(limit=10):
+            if message.author == bot.user and message.embeds:
+                messages.append(message)
+        
+        # Slet alle embed beskeder
+        for message in messages:
+            try:
+                await message.delete()
+            except:
+                pass
+        
+        # Send opdateret embed
+        await send_markbetalinger_embed(kanal)
+        
+    except Exception as e:
+        print(f"Fejl ved opdatering af markbetalinger embed: {e}")
 
 class AdminControlView(View):
     def __init__(self):
@@ -1143,6 +1336,77 @@ async def setup_pusher_stats_kanal():
     
     # Send stats embed
     await send_pusher_stats_embed(kanal)
+
+async def setup_markbetalinger_kanal():
+    """Setup markbetalinger kanal"""
+    kanal = bot.get_channel(MARKBETALINGS_KANAL_ID)
+    if kanal is None:
+        print(f"⚠️ Markbetalinger kanal med ID {MARKBETALINGS_KANAL_ID} ikke fundet.")
+        return
+    
+    try:
+        # Clear channel
+        await kanal.purge()
+        print(f"🧹 Markbetalinger kanal {kanal.name} er ryddet.")
+    except Exception as e:
+        print(f"❌ Fejl under rydning af markbetalinger kanal: {e}")
+    
+    # Send markbetalinger embed
+    await send_markbetalinger_embed(kanal)
+
+async def send_markbetalinger_embed(kanal):
+    """Send markbetalinger embed med liste over betalinger"""
+    embed = discord.Embed(
+        title="💳 Markbetalinger System",
+        description="**Oversigt over alle markbetalinger**",
+        color=0x00FF00
+    )
+    embed.set_thumbnail(url=LOGO_URL)
+    
+    # Hent alle betalinger
+    betalinger = get_markbetalinger()
+    
+    if betalinger:
+        # Opret liste format ligesom pusher stats
+        betalingsliste_text = "```\n"
+        for betaling in betalinger:
+            navn_padded = betaling["navn"][:20].ljust(20)
+            telefon_padded = betaling["telefon"][:15].ljust(15)
+            tidsperiode = betaling["tidsperiode"]
+            
+            # Formater udløbsdato
+            if betaling["udlobsdato"]:
+                udlobs_dato = datetime.strptime(betaling["udlobsdato"], "%Y-%m-%d %H:%M:%S")
+                udlobs_str = udlobs_dato.strftime("%d/%m %H:%M")
+            else:
+                udlobs_str = "Ukendt"
+            
+            betalingsliste_text += f"{navn_padded} {telefon_padded} {tidsperiode:<10} {udlobs_str}\n"
+        betalingsliste_text += "```"
+        
+        embed.add_field(
+            name="📋 Betalingsliste",
+            value=betalingsliste_text,
+            inline=False
+        )
+    else:
+        embed.add_field(
+            name="📋 Betalingsliste",
+            value="```\nIngen betalinger registreret endnu\n```",
+            inline=False
+        )
+    
+    embed.add_field(
+        name="ℹ️ Information",
+        value="Tryk på knappen nedenfor for at tilføje en ny betaling.",
+        inline=False
+    )
+    
+    embed.set_footer(text="OFFSET MC Markbetalinger System v1.0")
+    embed.timestamp = datetime.now()
+    
+    view = MarkbetalingView()
+    await kanal.send(embed=embed, view=view)
 
 def get_pusher_stats():
     """Get pusher statistics from database"""

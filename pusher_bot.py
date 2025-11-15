@@ -29,7 +29,10 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 FULDT_MEDLEM_ROLLE_ID = 1367567899828686891
 ADMIN_ROLLE_IDS = [1367567899878883413]
 ABSOLUT_ADMIN_ID = 356831538916098048
-PROSPECT_SUPPORTER_ROLLE_IDS = [1387100355535437917, 1386720142196736061]
+DEV_ROLLE_ID = 1439336949331529994  # Dev rolle - bypasser alle checks
+SUPPORTER_ROLLE_ID = 1387100355535437917
+PROSPECT_ROLLE_ID = 1386720142196736061
+PROSPECT_SUPPORTER_ROLLE_IDS = [SUPPORTER_ROLLE_ID, PROSPECT_ROLLE_ID]
 
 # Logo URL
 LOGO_URL = "https://cdn.discordapp.com/attachments/1439332163131674755/1439332204332318980/image.png?ex=691a2213&is=6918d093&hm=9e1217edfdd03d0f39516fc5617acd8585be87f54e7939845661cd14879ff8eb&"
@@ -38,7 +41,7 @@ LOGO_URL = "https://cdn.discordapp.com/attachments/1439332163131674755/143933220
 OPGAVE_KANAL_ID = 1439329928679129211
 OPGAVE_OPRETTELSES_KANAL_ID = 1439330014838522159
 STATUS_KANAL_ID = 1439329956327981206
-PRIVAT_KATEGORI_ID = 1427389435720241183
+PRIVAT_KATEGORI_ID = 1439340235820499036
 
 # Gamle prospect_supporter konstanter (for reference - kan fjernes senere)
 # OPGAVE_KANAL_ID = 1427388722709663895
@@ -655,8 +658,7 @@ class MedlemView(View):
     @discord.ui.button(label="➕ Opret Opgave", style=discord.ButtonStyle.primary, emoji="📝")
     async def opret_opgave(self, interaction: discord.Interaction, button: Button):
         # Tjek om brugeren har en af medlem rollerne
-        har_medlem_rolle = interaction.user.get_role(FULDT_MEDLEM_ROLLE_ID) is not None
-        if not har_medlem_rolle:
+        if not tjek_medlem_rolle(interaction.user):
             await interaction.response.send_message("⛔ Du skal have medlem rollen for at oprette opgaver!", ephemeral=True)
             return
         
@@ -665,96 +667,95 @@ class MedlemView(View):
 
 # Disabled: Markbetalinger
 # class MarkbetalingView(View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(label="➕ Tilføj Betaling", style=discord.ButtonStyle.primary, emoji="💳")
-    async def tilfoej_betaling(self, interaction: discord.Interaction, button: Button):
-        # Tjek om brugeren har en af medlem rollerne
-        har_medlem_rolle = interaction.user.get_role(FULDT_MEDLEM_ROLLE_ID) is not None
-        if not har_medlem_rolle:
-            await interaction.response.send_message("⛔ Du skal have medlem rollen for at tilføje betalinger!", ephemeral=True)
-            return
-        
-        # Send modal med select menu for tidsperiode
-        view = View(timeout=None)
-        select = TidsperiodeSelect()
-        view.add_item(select)
-        
-        # Send view først, så brugeren kan vælge tidsperiode
-        await interaction.response.send_message(
-            "**Vælg tidsperiode:**",
-            view=view,
-            ephemeral=True
-        )
-
-class TidsperiodeSelect(Select):
-    def __init__(self):
-        options = [
-            discord.SelectOption(
-                label="24 timer",
-                value="24 timer",
-                description="Betaling gælder i 24 timer"
-            ),
-            discord.SelectOption(
-                label="3 døgn",
-                value="3 døgn",
-                description="Betaling gælder i 3 døgn"
-            ),
-            discord.SelectOption(
-                label="1 uge",
-                value="1 uge",
-                description="Betaling gælder i 1 uge"
-            )
-        ]
-        super().__init__(placeholder="Vælg tidsperiode...", options=options, max_values=1)
-
-    async def callback(self, interaction: discord.Interaction):
-        # Send modal med navn og telefon
-        await interaction.response.send_modal(TilføjBetalingModal(self.values[0]))
-
-class TilføjBetalingModal(Modal):
-    def __init__(self, tidsperiode):
-        super().__init__(title="💳 Tilføj Betaling")
-        self.tidsperiode = tidsperiode
-        
-        self.navn = TextInput(
-            label="Navn",
-            placeholder="Indtast navn på personen der har betalt...",
-            required=True,
-            max_length=100
-        )
-        
-        self.telefon = TextInput(
-            label="Telefonnummer",
-            placeholder="Indtast telefonnummer...",
-            required=True,
-            max_length=20
-        )
-        
-        self.add_item(self.navn)
-        self.add_item(self.telefon)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        betaling_data = {
-            "navn": self.navn.value,
-            "telefon": self.telefon.value,
-            "tidsperiode": self.tidsperiode,
-            "oprettet_af": interaction.user.id,
-            "oprettet_navn": interaction.user.display_name
-        }
-        
-        # Disabled: Markbetalinger
-        # if add_markbetaling(betaling_data):
-        #     await interaction.response.send_message("✅ Betaling er blevet tilføjet!", ephemeral=True)
-        #     
-        #     # Opdater markbetalinger kanal
-        #     kanal = bot.get_channel(MARKBETALINGS_KANAL_ID)
-        #     if kanal:
-        #         await update_markbetalinger_embed(kanal)
-        # else:
-        #     await interaction.response.send_message("⛔ Fejl ved tilføjelse af betaling!", ephemeral=True)
-        await interaction.response.send_message("⛔ Markbetalinger er deaktiveret!", ephemeral=True)
+#     def __init__(self):
+#         super().__init__(timeout=None)
+# 
+#     @discord.ui.button(label="➕ Tilføj Betaling", style=discord.ButtonStyle.primary, emoji="💳")
+#     async def tilfoej_betaling(self, interaction: discord.Interaction, button: Button):
+#         # Tjek om brugeren har en af medlem rollerne
+#         if not tjek_medlem_rolle(interaction.user):
+#             await interaction.response.send_message("⛔ Du skal have medlem rollen for at tilføje betalinger!", ephemeral=True)
+#             return
+#         
+#         # Send modal med select menu for tidsperiode
+#         view = View(timeout=None)
+#         select = TidsperiodeSelect()
+#         view.add_item(select)
+#         
+#         # Send view først, så brugeren kan vælge tidsperiode
+#         await interaction.response.send_message(
+#             "**Vælg tidsperiode:**",
+#             view=view,
+#             ephemeral=True
+#         )
+# 
+# class TidsperiodeSelect(Select):
+#     def __init__(self):
+#         options = [
+#             discord.SelectOption(
+#                 label="24 timer",
+#                 value="24 timer",
+#                 description="Betaling gælder i 24 timer"
+#             ),
+#             discord.SelectOption(
+#                 label="3 døgn",
+#                 value="3 døgn",
+#                 description="Betaling gælder i 3 døgn"
+#             ),
+#             discord.SelectOption(
+#                 label="1 uge",
+#                 value="1 uge",
+#                 description="Betaling gælder i 1 uge"
+#             )
+#         ]
+#         super().__init__(placeholder="Vælg tidsperiode...", options=options, max_values=1)
+# 
+#     async def callback(self, interaction: discord.Interaction):
+#         # Send modal med navn og telefon
+#         await interaction.response.send_modal(TilføjBetalingModal(self.values[0]))
+# 
+# class TilføjBetalingModal(Modal):
+#     def __init__(self, tidsperiode):
+#         super().__init__(title="💳 Tilføj Betaling")
+#         self.tidsperiode = tidsperiode
+#         
+#         self.navn = TextInput(
+#             label="Navn",
+#             placeholder="Indtast navn på personen der har betalt...",
+#             required=True,
+#             max_length=100
+#         )
+#         
+#         self.telefon = TextInput(
+#             label="Telefonnummer",
+#             placeholder="Indtast telefonnummer...",
+#             required=True,
+#             max_length=20
+#         )
+#         
+#         self.add_item(self.navn)
+#         self.add_item(self.telefon)
+# 
+#     async def on_submit(self, interaction: discord.Interaction):
+#         betaling_data = {
+#             "navn": self.navn.value,
+#             "telefon": self.telefon.value,
+#             "tidsperiode": self.tidsperiode,
+#             "oprettet_af": interaction.user.id,
+#             "oprettet_navn": interaction.user.display_name
+#         }
+#         
+#         # Disabled: Markbetalinger
+#         # if add_markbetaling(betaling_data):
+#         #     await interaction.response.send_message("✅ Betaling er blevet tilføjet!", ephemeral=True)
+#         #     
+#         #     # Opdater markbetalinger kanal
+#         #     kanal = bot.get_channel(MARKBETALINGS_KANAL_ID)
+#         #     if kanal:
+#         #         await update_markbetalinger_embed(kanal)
+#         # else:
+#         #     await interaction.response.send_message("⛔ Fejl ved tilføjelse af betaling!", ephemeral=True)
+#         await interaction.response.send_message("⛔ Markbetalinger er deaktiveret!", ephemeral=True)
 
 # Disabled: Markbetalinger
 # async def update_markbetalinger_embed(kanal):
@@ -1498,34 +1499,73 @@ def get_prospect_supporter_stats():
         print(f"Fejl ved hentning af prospect_supporter stats: {e}")
         return []
 
-def get_current_prospect_supporter_stats(guild):
-    """Get prospect_supporter stats kun for folk med prospect_supporter rollen lige nu"""
+def get_current_supporter_stats(guild):
+    """Get supporter stats kun for folk med supporter rollen lige nu"""
     try:
-        prospect_supporter_role = discord.utils.get(guild.roles, id=PROSPECT_SUPPORTER_ROLLE_IDS[0])
-        if not prospect_supporter_role:
+        supporter_role = discord.utils.get(guild.roles, id=SUPPORTER_ROLLE_ID)
+        if not supporter_role:
             return []
         
-        # Hent alle prospect_supporter IDs der har rollen lige nu
-        current_prospect_supporter_ids = [member.id for member in prospect_supporter_role.members]
+        current_supporter_ids = [member.id for member in supporter_role.members]
         
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         
-        # Kun hent stats for folk der stadig har prospect_supporter rollen
-        if current_prospect_supporter_ids:
-            placeholders = ','.join(['?' for _ in current_prospect_supporter_ids])
+        if current_supporter_ids:
+            placeholders = ','.join(['?' for _ in current_supporter_ids])
             cursor.execute(f"""
             SELECT prospect_supporter_id, prospect_supporter_navn, total_points 
             FROM prospect_supporter_stats 
             WHERE prospect_supporter_id IN ({placeholders})
             ORDER BY total_points DESC
-            """, current_prospect_supporter_ids)
+            """, current_supporter_ids)
             stats = cursor.fetchall()
         else:
             stats = []
         
         conn.close()
         return stats
+    except Exception as e:
+        print(f"Fejl ved hentning af supporter stats: {e}")
+        return []
+
+def get_current_prospect_stats(guild):
+    """Get prospect stats kun for folk med prospect rollen lige nu"""
+    try:
+        prospect_role = discord.utils.get(guild.roles, id=PROSPECT_ROLLE_ID)
+        if not prospect_role:
+            return []
+        
+        current_prospect_ids = [member.id for member in prospect_role.members]
+        
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        if current_prospect_ids:
+            placeholders = ','.join(['?' for _ in current_prospect_ids])
+            cursor.execute(f"""
+            SELECT prospect_supporter_id, prospect_supporter_navn, total_points 
+            FROM prospect_supporter_stats 
+            WHERE prospect_supporter_id IN ({placeholders})
+            ORDER BY total_points DESC
+            """, current_prospect_ids)
+            stats = cursor.fetchall()
+        else:
+            stats = []
+        
+        conn.close()
+        return stats
+    except Exception as e:
+        print(f"Fejl ved hentning af prospect stats: {e}")
+        return []
+
+def get_current_prospect_supporter_stats(guild):
+    """Get prospect_supporter stats kun for folk med prospect_supporter rollen lige nu"""
+    try:
+        # Kombiner supporter og prospect stats
+        supporter_stats = get_current_supporter_stats(guild)
+        prospect_stats = get_current_prospect_stats(guild)
+        return supporter_stats + prospect_stats
     except Exception as e:
         print(f"Fejl ved hentning af aktuelle prospect_supporter stats: {e}")
         return []
@@ -1581,34 +1621,41 @@ def get_recent_completed_jobs_current_prospect_supporters(guild, limit=5):
         return []
 
 async def ensure_all_prospect_supporters_in_stats(guild):
-    """Sørg for at alle med prospect_supporter rollen er i statistik tabellen og fjern gamle"""
+    """Sørg for at alle med prospect_supporter/supporter/prospect rollen er i statistik tabellen og fjern gamle"""
     try:
-        prospect_supporter_role = discord.utils.get(guild.roles, id=PROSPECT_SUPPORTER_ROLLE_IDS[0])
-        if not prospect_supporter_role:
-            print(f"⚠️ Prospect/Supporter rolle med ID {PROSPECT_SUPPORTER_ROLLE_IDS[0]} ikke fundet.")
-            return
+        supporter_role = discord.utils.get(guild.roles, id=SUPPORTER_ROLLE_ID)
+        prospect_role = discord.utils.get(guild.roles, id=PROSPECT_ROLLE_ID)
         
-        current_prospect_supporter_ids = [member.id for member in prospect_supporter_role.members]
+        all_members = []
+        if supporter_role:
+            all_members.extend(supporter_role.members)
+        if prospect_role:
+            all_members.extend(prospect_role.members)
+        
+        # Fjern duplikater
+        all_members = list({member.id: member for member in all_members}.values())
+        
+        current_prospect_supporter_ids = [member.id for member in all_members]
         
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         
-        # Indsæt alle aktuelle prospect_supporterne i tabellen hvis de ikke allerede er der
-        for member in prospect_supporter_role.members:
+        # Indsæt alle aktuelle members i tabellen hvis de ikke allerede er der
+        for member in all_members:
             cursor.execute("""
                 INSERT OR IGNORE INTO prospect_supporter_stats (prospect_supporter_id, prospect_supporter_navn, total_points)
                 VALUES (?, ?, 0)
             """, (member.id, member.display_name))
         
-        # Opdater navne for eksisterende prospect_supporterne
-        for member in prospect_supporter_role.members:
+        # Opdater navne for eksisterende members
+        for member in all_members:
             cursor.execute("""
                 UPDATE prospect_supporter_stats 
                 SET prospect_supporter_navn = ?, last_updated = CURRENT_TIMESTAMP
                 WHERE prospect_supporter_id = ?
             """, (member.display_name, member.id))
         
-        # VIGTIGT: Marker folk uden prospect_supporter rolle som inaktive
+        # VIGTIGT: Marker folk uden rolle som inaktive
         # Vi sletter ikke deres data, men de vises ikke i listen
         if current_prospect_supporter_ids:
             placeholders = ','.join(['?' for _ in current_prospect_supporter_ids])
@@ -1620,44 +1667,62 @@ async def ensure_all_prospect_supporters_in_stats(guild):
         
         conn.commit()
         conn.close()
-        print(f"✅ Real-time opdaterede prospect_supporter stats for {len(prospect_supporter_role.members)} aktive prospect_supporterne")
+        print(f"✅ Real-time opdaterede stats for {len(all_members)} aktive members ({len(supporter_role.members) if supporter_role else 0} supporters, {len(prospect_role.members) if prospect_role else 0} prospects)")
         
     except Exception as e:
         print(f"Fejl ved real-time opdatering af prospect_supporter stats: {e}")
 
 async def send_prospect_supporter_stats_embed(kanal):
-    """Send prospect_supporter statistik embed"""
+    """Send prospect_supporter statistik embed med separate lister for supporters og prospects"""
     # Sørg for alle prospect_supporterne er i databasen
     await ensure_all_prospect_supporters_in_stats(kanal.guild)
     
     embed = discord.Embed(
         title="📊 Prospect/Supporter Statistikker",
-        description="**Oversigt over alle prospect_supporterne og deres færdiggjorte jobs**",
+        description="**Oversigt over alle supporters og prospects og deres points**",
         color=0x00FF00
     )
     embed.set_thumbnail(url=LOGO_URL)
     
-    # Get prospect_supporter stats kun for folk med prospect_supporter rollen lige nu
-    prospect_supporter_stats = get_current_prospect_supporter_stats(kanal.guild)
-    
-    if prospect_supporter_stats:
-        # Create rankings text med mørkeblå felt stil
-        rankings_text = "```\n"
-        for i, (prospect_supporter_id, prospect_supporter_navn, total_points) in enumerate(prospect_supporter_stats, 1):
-            # Pad navnene så de er aligned
-            navn_padded = prospect_supporter_navn[:20].ljust(20)
-            rankings_text += f"{i:2d}. {navn_padded} {total_points:3d} points\n"
-        rankings_text += "```"
+    # Get supporter stats
+    supporter_stats = get_current_supporter_stats(kanal.guild)
+    if supporter_stats:
+        supporter_text = "```\n"
+        for i, (supporter_id, supporter_navn, total_points) in enumerate(supporter_stats, 1):
+            navn_padded = supporter_navn[:20].ljust(20)
+            supporter_text += f"{i:2d}. {navn_padded} {total_points:3d} points\n"
+        supporter_text += "```"
         
         embed.add_field(
-            name="🏆 Prospect/Supporter Rankings",
-            value=rankings_text,
+            name="👥 Supporter Rankings",
+            value=supporter_text,
             inline=False
         )
     else:
         embed.add_field(
-            name="🏆 Prospect/Supporter Rankings",
-            value="```\nIngen prospect_supporterne fundet\n```",
+            name="👥 Supporter Rankings",
+            value="```\nIngen supporters fundet\n```",
+            inline=False
+        )
+    
+    # Get prospect stats
+    prospect_stats = get_current_prospect_stats(kanal.guild)
+    if prospect_stats:
+        prospect_text = "```\n"
+        for i, (prospect_id, prospect_navn, total_points) in enumerate(prospect_stats, 1):
+            navn_padded = prospect_navn[:20].ljust(20)
+            prospect_text += f"{i:2d}. {navn_padded} {total_points:3d} points\n"
+        prospect_text += "```"
+        
+        embed.add_field(
+            name="🎯 Prospect Rankings",
+            value=prospect_text,
+            inline=False
+        )
+    else:
+        embed.add_field(
+            name="🎯 Prospect Rankings",
+            value="```\nIngen prospects fundet\n```",
             inline=False
         )
     
@@ -2146,9 +2211,21 @@ class EditPermOpgaveSelect(Select):
         # Send modal
         await interaction.response.send_modal(EditPermOpgaveModal(gammel_opgave))
 
+def tjek_dev_rolle(user):
+    """Tjek om brugeren har dev rollen - bypasser alle checks"""
+    return user.id == ABSOLUT_ADMIN_ID or any(role.id == DEV_ROLLE_ID for role in user.roles)
+
 def tjek_admin_rolle(user):
-    """Tjek om brugeren har admin rollen eller er absolut admin"""
+    """Tjek om brugeren har admin rollen, dev rollen eller er absolut admin"""
+    if tjek_dev_rolle(user):
+        return True
     return user.id == ABSOLUT_ADMIN_ID or any(role.id in ADMIN_ROLLE_IDS for role in user.roles)
+
+def tjek_medlem_rolle(user):
+    """Tjek om brugeren har medlem rollen eller dev rollen"""
+    if tjek_dev_rolle(user):
+        return True
+    return user.get_role(FULDT_MEDLEM_ROLLE_ID) is not None
 
 @bot.command(name="prospect_supporterbot")
 async def prospect_supporterbot_admin(ctx):

@@ -26,38 +26,30 @@ intents.members = True  # Nødvendigt for member events
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Kanal og rolle IDs
-MEDLEM_ROLLE_IDS = [
-    1427380362933309553,
-    1427380405820199095,
-    1427380453257511072,
-    1427380496106524672,
-    1427380535834972301,
-    1427380589555876051,
-    1427380624813064304,
-    1427380609403191386
-]
-
-# Logo URL - Erstat med dit rigtige logo URL
-LOGO_URL = "https://cdn.discordapp.com/attachments/1430349812439449620/1430357187342897242/Logo.png?ex=68f97b70&is=68f829f0&hm=0e0dfb91bcfbb9e965bb425d3ab840c2a4580bd9e0641499660af924ae1efbdd&"
-ADMIN_ROLLE_IDS = [
-    1427380609403191386,
-    1427380624813064304,
-    1427380589555876051,
-    1427380535834972301,
-    1427380496106524672,
-    1427380453257511072
-]
-PUSHER_KANAL_ID = 1427388722709663895
-MEDLEM_KANAL_ID = 1427421512637349948
-PRIVAT_KATEGORI_ID = 1427389435720241183
-PUSHER_STATS_KANAL_ID = 1427388707807297556
-PUSHER_ROLLE_ID = 1430353400385507448
+FULDT_MEDLEM_ROLLE_ID = 1367567899828686891
+ADMIN_ROLLE_IDS = [1367567899878883413]
 ABSOLUT_ADMIN_ID = 356831538916098048
-MARKBETALINGS_KANAL_ID = 1434546263528968273
+PROSPECT_SUPPORTER_ROLLE_IDS = [1387100355535437917, 1386720142196736061]
+
+# Logo URL
+LOGO_URL = "https://cdn.discordapp.com/attachments/1439332163131674755/1439332204332318980/image.png?ex=691a2213&is=6918d093&hm=9e1217edfdd03d0f39516fc5617acd8585be87f54e7939845661cd14879ff8eb&"
+
+# Kanaler
+OPGAVE_KANAL_ID = 1439329928679129211
+OPGAVE_OPRETTELSES_KANAL_ID = 1439330014838522159
+STATUS_KANAL_ID = 1439329956327981206
+PRIVAT_KATEGORI_ID = 1427389435720241183
+
+# Gamle prospect_supporter konstanter (for reference - kan fjernes senere)
+# OPGAVE_KANAL_ID = 1427388722709663895
+# OPGAVE_OPRETTELSES_KANAL_ID = 1427421512637349948
+# PUSHER_STATS_KANAL_ID = 1427388707807297556
+# PROSPECT_SUPPORTER_ROLLE_IDS[0] = 1430353400385507448
+# MARKBETALINGS_KANAL_ID = 1434546263528968273  # Disabled
 
 # Database setup
 DATA_DIR = Path("/data") if Path("/data").exists() else Path(".")
-DB_PATH = DATA_DIR / "pusher_bot.db"
+DB_PATH = DATA_DIR / "prospect_supporter_bot.db"
 
 # Default permanent jobs
 DEFAULT_PERMANENT_JOBS = [
@@ -88,11 +80,12 @@ def init_database():
                 titel TEXT NOT NULL,
                 beskrivelse TEXT NOT NULL,
                 belonning TEXT,
+                point_reward INTEGER DEFAULT 0,
                 oprettet_af INTEGER NOT NULL,
                 oprettet_navn TEXT NOT NULL,
                 status TEXT DEFAULT 'ledig',
-                pusher_id INTEGER,
-                pusher_navn TEXT,
+                prospect_supporter_id INTEGER,
+                prospect_supporter_navn TEXT,
                 privat_kanal_id INTEGER,
                 oprettet_tid TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 taget_tid TIMESTAMP,
@@ -106,23 +99,40 @@ def init_database():
                 titel TEXT NOT NULL,
                 beskrivelse TEXT NOT NULL,
                 belonning TEXT,
+                point_reward INTEGER DEFAULT 0,
                 oprettet_af INTEGER NOT NULL,
                 oprettet_navn TEXT NOT NULL,
-                pusher_id INTEGER NOT NULL,
-                pusher_navn TEXT NOT NULL,
+                prospect_supporter_id INTEGER NOT NULL,
+                prospect_supporter_navn TEXT NOT NULL,
                 completed_tid TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 job_number INTEGER
             )
         ''')
         
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS pusher_stats (
-                pusher_id INTEGER PRIMARY KEY,
-                pusher_navn TEXT NOT NULL,
-                total_jobs INTEGER DEFAULT 0,
+            CREATE TABLE IF NOT EXISTS prospect_supporter_stats (
+                prospect_supporter_id INTEGER PRIMARY KEY,
+                prospect_supporter_navn TEXT NOT NULL,
+                total_points INTEGER DEFAULT 0,
                 last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        
+        # Migration: Omdøb gamle prospect_supporter_stats hvis den eksisterer
+        cursor.execute('''
+            SELECT name FROM sqlite_master 
+            WHERE type='table' AND name='prospect_supporter_stats'
+        ''')
+        if cursor.fetchone():
+            # Check om total_points kolonne eksisterer
+            cursor.execute('PRAGMA table_info(prospect_supporter_stats)')
+            columns = [col[1] for col in cursor.fetchall()]
+            if 'total_points' not in columns:
+                try:
+                    cursor.execute('ALTER TABLE prospect_supporter_stats RENAME TO prospect_supporter_stats_old')
+                    cursor.execute('ALTER TABLE prospect_supporter_stats RENAME TO prospect_supporter_stats_backup')
+                except:
+                    pass
         
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS settings (
@@ -131,18 +141,19 @@ def init_database():
             )
         ''')
         
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS markbetalinger (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                navn TEXT NOT NULL,
-                telefon TEXT NOT NULL,
-                tidsperiode TEXT NOT NULL,
-                betalingsdato TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                udlobsdato TIMESTAMP,
-                oprettet_af INTEGER NOT NULL,
-                oprettet_navn TEXT NOT NULL
-            )
-        ''')
+        # Disabled: Markbetalinger
+        # cursor.execute('''
+        #     CREATE TABLE IF NOT EXISTS markbetalinger (
+        #         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        #         navn TEXT NOT NULL,
+        #         telefon TEXT NOT NULL,
+        #         tidsperiode TEXT NOT NULL,
+        #         betalingsdato TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        #         udlobsdato TIMESTAMP,
+        #         oprettet_af INTEGER NOT NULL,
+        #         oprettet_navn TEXT NOT NULL
+        #     )
+        # ''')
         
         # Insert default permanent jobs if none exist
         cursor.execute("SELECT COUNT(*) FROM permanent_jobs")
@@ -222,8 +233,8 @@ def get_member_jobs():
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, titel, beskrivelse, belonning, oprettet_af, oprettet_navn, 
-                   status, pusher_id, pusher_navn, privat_kanal_id, oprettet_tid, 
+            SELECT id, titel, beskrivelse, belonning, point_reward, oprettet_af, oprettet_navn, 
+                   status, prospect_supporter_id, prospect_supporter_navn, privat_kanal_id, oprettet_tid, 
                    taget_tid, job_number
             FROM member_jobs 
             ORDER BY job_number
@@ -232,9 +243,10 @@ def get_member_jobs():
         for row in cursor.fetchall():
             job = {
                 "id": row[0], "titel": row[1], "beskrivelse": row[2], "belonning": row[3],
-                "oprettet_af": row[4], "oprettet_navn": row[5], "status": row[6],
-                "pusher_id": row[7], "pusher_navn": row[8], "privat_kanal_id": row[9],
-                "oprettet_tid": row[10], "taget_tid": row[11], "job_number": row[12]
+                "point_reward": row[4] if len(row) > 4 else 0, "oprettet_af": row[5], "oprettet_navn": row[6], 
+                "status": row[7], "prospect_supporter_id": row[8], "prospect_supporter_navn": row[9], 
+                "privat_kanal_id": row[10], "oprettet_tid": row[11], "taget_tid": row[12], 
+                "job_number": row[13]
             }
             jobs.append(job)
         conn.close()
@@ -255,11 +267,12 @@ def add_member_job(job_data):
         
         cursor.execute("""
             INSERT INTO member_jobs 
-            (id, titel, beskrivelse, belonning, oprettet_af, oprettet_navn, job_number)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            (id, titel, beskrivelse, belonning, point_reward, oprettet_af, oprettet_navn, job_number)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             job_data["id"], job_data["titel"], job_data["beskrivelse"],
-            job_data["belonning"], job_data["oprettet_af"], job_data["oprettet_navn"],
+            job_data["belonning"], job_data.get("point_reward", 0), 
+            job_data["oprettet_af"], job_data["oprettet_navn"],
             job_counter
         ))
         
@@ -273,18 +286,18 @@ def add_member_job(job_data):
         print(f"Fejl ved tilføjelse af medlem job: {e}")
         return False
 
-def update_member_job_status(job_id, status, pusher_id=None, pusher_navn=None):
+def update_member_job_status(job_id, status, prospect_supporter_id=None, prospect_supporter_navn=None):
     """Update member job status in database"""
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         
-        if pusher_id and pusher_navn:
+        if prospect_supporter_id and prospect_supporter_navn:
             cursor.execute("""
                 UPDATE member_jobs 
-                SET status = ?, pusher_id = ?, pusher_navn = ?, taget_tid = CURRENT_TIMESTAMP
+                SET status = ?, prospect_supporter_id = ?, prospect_supporter_navn = ?, taget_tid = CURRENT_TIMESTAMP
                 WHERE id = ?
-            """, (status, pusher_id, pusher_navn, job_id))
+            """, (status, prospect_supporter_id, prospect_supporter_navn, job_id))
         else:
             cursor.execute("UPDATE member_jobs SET status = ? WHERE id = ?", (status, job_id))
         
@@ -336,20 +349,23 @@ def complete_member_job(job_id):
             conn.close()
             return False
         
+        # Get point_reward (column 4 if exists, else 0)
+        point_reward = job_row[4] if len(job_row) > 4 else 0
+        
         # Move to completed_jobs
         cursor.execute("""
             INSERT INTO completed_jobs 
-            (id, titel, beskrivelse, belonning, oprettet_af, oprettet_navn, 
-             pusher_id, pusher_navn, job_number)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (job_row[0], job_row[1], job_row[2], job_row[3], job_row[4], 
-              job_row[5], job_row[7], job_row[8], job_row[12]))
+            (id, titel, beskrivelse, belonning, point_reward, oprettet_af, oprettet_navn, 
+             prospect_supporter_id, prospect_supporter_navn, job_number)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (job_row[0], job_row[1], job_row[2], job_row[3], point_reward, job_row[5], 
+              job_row[6], job_row[8], job_row[9], job_row[13]))
         
-        # Update pusher stats
+        # Update prospect_supporter stats with points
         cursor.execute("""
-            INSERT OR REPLACE INTO pusher_stats (pusher_id, pusher_navn, total_jobs)
-            VALUES (?, ?, COALESCE((SELECT total_jobs FROM pusher_stats WHERE pusher_id = ?), 0) + 1)
-        """, (job_row[7], job_row[8], job_row[7]))
+            INSERT OR REPLACE INTO prospect_supporter_stats (prospect_supporter_id, prospect_supporter_navn, total_points)
+            VALUES (?, ?, COALESCE((SELECT total_points FROM prospect_supporter_stats WHERE prospect_supporter_id = ?), 0) + ?)
+        """, (job_row[8], job_row[9], job_row[8], point_reward))
         
         # Remove from member_jobs
         cursor.execute("DELETE FROM member_jobs WHERE id = ?", (job_id,))
@@ -368,7 +384,7 @@ def get_member_job_by_id(job_id):
         cursor = conn.cursor()
         cursor.execute("""
             SELECT id, titel, beskrivelse, belonning, oprettet_af, oprettet_navn, 
-                   status, pusher_id, pusher_navn, privat_kanal_id, oprettet_tid, 
+                   status, prospect_supporter_id, prospect_supporter_navn, privat_kanal_id, oprettet_tid, 
                    taget_tid, job_number
             FROM member_jobs WHERE id = ?
         """, (job_id,))
@@ -379,7 +395,7 @@ def get_member_job_by_id(job_id):
             return {
                 "id": row[0], "titel": row[1], "beskrivelse": row[2], "belonning": row[3],
                 "oprettet_af": row[4], "oprettet_navn": row[5], "status": row[6],
-                "pusher_id": row[7], "pusher_navn": row[8], "privat_kanal_id": row[9],
+                "prospect_supporter_id": row[7], "prospect_supporter_navn": row[8], "privat_kanal_id": row[9],
                 "oprettet_tid": row[10], "taget_tid": row[11], "job_number": row[12]
             }
         return None
@@ -394,7 +410,7 @@ def get_member_job_by_number(job_number):
         cursor = conn.cursor()
         cursor.execute("""
             SELECT id, titel, beskrivelse, belonning, oprettet_af, oprettet_navn, 
-                   status, pusher_id, pusher_navn, privat_kanal_id, oprettet_tid, 
+                   status, prospect_supporter_id, prospect_supporter_navn, privat_kanal_id, oprettet_tid, 
                    taget_tid, job_number
             FROM member_jobs WHERE job_number = ?
         """, (job_number,))
@@ -405,7 +421,7 @@ def get_member_job_by_number(job_number):
             return {
                 "id": row[0], "titel": row[1], "beskrivelse": row[2], "belonning": row[3],
                 "oprettet_af": row[4], "oprettet_navn": row[5], "status": row[6],
-                "pusher_id": row[7], "pusher_navn": row[8], "privat_kanal_id": row[9],
+                "prospect_supporter_id": row[7], "prospect_supporter_navn": row[8], "privat_kanal_id": row[9],
                 "oprettet_tid": row[10], "taget_tid": row[11], "job_number": row[12]
             }
         return None
@@ -436,7 +452,8 @@ def delete_member_job_by_id(job_id):
         print(f"Fejl ved sletning af job: {e}")
         return False, None
 
-def get_markbetalinger():
+# Disabled: Markbetalinger
+# def get_markbetalinger():
     """Get all markbetalinger from database"""
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -462,7 +479,7 @@ def get_markbetalinger():
         print(f"Fejl ved hentning af markbetalinger: {e}")
         return []
 
-def add_markbetaling(betaling_data):
+# def add_markbetaling(betaling_data):
     """Add markbetaling to database"""
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -504,7 +521,7 @@ def add_markbetaling(betaling_data):
 
 @bot.event
 async def on_ready():
-    print(f"Pusher Bot er online som {bot.user}")
+    print(f"Prospect/Supporter Bot er online som {bot.user}")
     
     # Set bot avatar/logo
     try:
@@ -514,7 +531,7 @@ async def on_ready():
                 if response.status == 200:
                     avatar_data = await response.read()
                     await bot.user.edit(avatar=avatar_data)
-                    print("✅ Bot avatar opdateret med OFFSET MC logo")
+                    print("✅ Bot avatar opdateret med Red Devils logo")
                 else:
                     print("⚠️ Kunne ikke hente logo til bot avatar")
     except Exception as e:
@@ -531,30 +548,28 @@ async def on_ready():
     init_database()
     
     # Setup kanaler
-    await setup_pusher_kanal()
-    await setup_medlem_kanal()
-    await setup_pusher_stats_kanal()
-    await setup_markbetalinger_kanal()
+    await setup_prospect_supporter_kanal()
+    await setup_opgave_oprettelse_kanal()
+    await setup_prospect_supporter_stats_kanal()
+    # await setup_markbetalinger_kanal()  # Disabled
     
     # Start periodisk check som backup
     periodic_stats_check.start()
 
 @bot.event
 async def on_member_update(before, after):
-    """Opdater pusher stats når medlemmer får/mister pusher rollen"""
+    """Opdater prospect_supporter stats når medlemmer får/mister prospect_supporter rollen"""
     try:
         # Debug: Log alle rolle ændringer
         print(f"🔍 Member update detected for {after.display_name}")
         
-        # Tjek om pusher rollen er ændret
-        pusher_role_id = PUSHER_ROLLE_ID
+        # Tjek om prospect_supporter rollen er ændret
+        before_has_role = any(role.id in PROSPECT_SUPPORTER_ROLLE_IDS for role in before.roles)
+        after_has_role = any(role.id in PROSPECT_SUPPORTER_ROLLE_IDS for role in after.roles)
         
-        before_has_role = any(role.id == pusher_role_id for role in before.roles)
-        after_has_role = any(role.id == pusher_role_id for role in after.roles)
+        print(f"🔍 Prospect/Supporter rolle check: {before_has_role} → {after_has_role}")
         
-        print(f"🔍 Pusher rolle check: {before_has_role} → {after_has_role}")
-        
-        # Hvis pusher rollen er ændret
+        # Hvis prospect_supporter rollen er ændret
         if before_has_role != after_has_role:
             print(f"🔄 PUSHER ROLLE ÆNDRET for {after.display_name}: {before_has_role} → {after_has_role}")
             
@@ -562,10 +577,10 @@ async def on_member_update(before, after):
             await asyncio.sleep(2)
             
             # Opdater stats kanal automatisk
-            stats_kanal = bot.get_channel(PUSHER_STATS_KANAL_ID)
+            stats_kanal = bot.get_channel(STATUS_KANAL_ID)
             if stats_kanal:
-                await update_pusher_stats_embed(stats_kanal)
-                print(f"✅ OPDATEREDE pusher stats efter rolle ændring for {after.display_name}")
+                await update_prospect_supporter_stats_embed(stats_kanal)
+                print(f"✅ OPDATEREDE prospect_supporter stats efter rolle ændring for {after.display_name}")
             else:
                 print(f"⚠️ Stats kanal ikke fundet!")
     except Exception as e:
@@ -573,50 +588,50 @@ async def on_member_update(before, after):
 
 @bot.event
 async def on_member_remove(member):
-    """Opdater pusher stats når et medlem forlader serveren"""
-    # Tjek om medlemmet havde pusher rollen
-    had_pusher_role = any(role.id == PUSHER_ROLLE_ID for role in member.roles)
+    """Opdater prospect_supporter stats når et medlem forlader serveren"""
+    # Tjek om medlemmet havde prospect_supporter rollen
+    had_prospect_supporter_role = any(role.id in PROSPECT_SUPPORTER_ROLLE_IDS for role in member.roles)
     
-    if had_pusher_role:
-        print(f"👋 Pusher {member.display_name} forlod serveren")
+    if had_prospect_supporter_role:
+        print(f"👋 Prospect/Supporter {member.display_name} forlod serveren")
         
         # Opdater stats kanal automatisk
-        stats_kanal = bot.get_channel(PUSHER_STATS_KANAL_ID)
+        stats_kanal = bot.get_channel(STATUS_KANAL_ID)
         if stats_kanal:
             # Vent lidt så Discord opdaterer rolle listen
             await asyncio.sleep(1)
-            await update_pusher_stats_embed(stats_kanal)
-            print(f"✅ Opdaterede pusher stats efter {member.display_name} forlod serveren")
+            await update_prospect_supporter_stats_embed(stats_kanal)
+            print(f"✅ Opdaterede prospect_supporter stats efter {member.display_name} forlod serveren")
 
 @bot.event
 async def on_member_join(member):
-    """Potentielt opdater pusher stats hvis ny medlem får pusher rolle hurtigt"""
+    """Potentielt opdater prospect_supporter stats hvis ny medlem får prospect_supporter rolle hurtigt"""
     # Denne event trigger ikke stats opdatering med det samme,
     # men on_member_update vil fange det når de får rollen
     pass
 
-async def setup_pusher_kanal():
-    """Setup pusher kanal med job oversigt"""
-    kanal = bot.get_channel(PUSHER_KANAL_ID)
+async def setup_prospect_supporter_kanal():
+    """Setup prospect_supporter kanal med job oversigt"""
+    kanal = bot.get_channel(OPGAVE_KANAL_ID)
     if kanal is None:
-        print(f"⚠️ Pusher kanal med ID {PUSHER_KANAL_ID} ikke fundet.")
+        print(f"⚠️ Prospect/Supporter kanal med ID {OPGAVE_KANAL_ID} ikke fundet.")
         return
     
     try:
         # Clear channel
         await kanal.purge()
-        print(f"🧹 Pusher kanal {kanal.name} er ryddet.")
+        print(f"🧹 Prospect/Supporter kanal {kanal.name} er ryddet.")
     except Exception as e:
-        print(f"❌ Fejl under rydning af pusher kanal: {e}")
+        print(f"❌ Fejl under rydning af prospect_supporter kanal: {e}")
     
-    # Send pusher embed
-    await send_pusher_embed(kanal)
+    # Send prospect_supporter embed
+    await send_prospect_supporter_embed(kanal)
 
-async def setup_medlem_kanal():
-    """Setup medlem kanal med knap til at oprette jobs"""
-    kanal = bot.get_channel(MEDLEM_KANAL_ID)
+async def setup_opgave_oprettelse_kanal():
+    """Setup opgave oprettelses kanal med knap til at oprette jobs"""
+    kanal = bot.get_channel(OPGAVE_OPRETTELSES_KANAL_ID)
     if kanal is None:
-        print(f"⚠️ Medlem kanal med ID {MEDLEM_KANAL_ID} ikke fundet.")
+        print(f"⚠️ Opgave oprettelses kanal med ID {OPGAVE_OPRETTELSES_KANAL_ID} ikke fundet.")
         return
     
     try:
@@ -626,10 +641,10 @@ async def setup_medlem_kanal():
     except Exception as e:
         print(f"❌ Fejl under rydning af medlem kanal: {e}")
     
-    # Send medlem embed
-    await send_medlem_embed(kanal)
+    # Send opgave oprettelse embed
+    await send_opgave_oprettelse_embed(kanal)
 
-class PusherJobView(View):
+class ProspectSupporterJobView(View):
     def __init__(self):
         super().__init__(timeout=None)
 
@@ -640,7 +655,7 @@ class MedlemView(View):
     @discord.ui.button(label="➕ Opret Opgave", style=discord.ButtonStyle.primary, emoji="📝")
     async def opret_opgave(self, interaction: discord.Interaction, button: Button):
         # Tjek om brugeren har en af medlem rollerne
-        har_medlem_rolle = any(role.id in MEDLEM_ROLLE_IDS for role in interaction.user.roles)
+        har_medlem_rolle = interaction.user.get_role(FULDT_MEDLEM_ROLLE_ID) is not None
         if not har_medlem_rolle:
             await interaction.response.send_message("⛔ Du skal have medlem rollen for at oprette opgaver!", ephemeral=True)
             return
@@ -648,14 +663,15 @@ class MedlemView(View):
         # Send modal
         await interaction.response.send_modal(OpretOpgaveModal())
 
-class MarkbetalingView(View):
+# Disabled: Markbetalinger
+# class MarkbetalingView(View):
     def __init__(self):
         super().__init__(timeout=None)
 
     @discord.ui.button(label="➕ Tilføj Betaling", style=discord.ButtonStyle.primary, emoji="💳")
     async def tilfoej_betaling(self, interaction: discord.Interaction, button: Button):
         # Tjek om brugeren har en af medlem rollerne
-        har_medlem_rolle = any(role.id in MEDLEM_ROLLE_IDS for role in interaction.user.roles)
+        har_medlem_rolle = interaction.user.get_role(FULDT_MEDLEM_ROLLE_ID) is not None
         if not har_medlem_rolle:
             await interaction.response.send_message("⛔ Du skal have medlem rollen for at tilføje betalinger!", ephemeral=True)
             return
@@ -728,37 +744,40 @@ class TilføjBetalingModal(Modal):
             "oprettet_navn": interaction.user.display_name
         }
         
-        if add_markbetaling(betaling_data):
-            await interaction.response.send_message("✅ Betaling er blevet tilføjet!", ephemeral=True)
-            
-            # Opdater markbetalinger kanal
-            kanal = bot.get_channel(MARKBETALINGS_KANAL_ID)
-            if kanal:
-                await update_markbetalinger_embed(kanal)
-        else:
-            await interaction.response.send_message("⛔ Fejl ved tilføjelse af betaling!", ephemeral=True)
+        # Disabled: Markbetalinger
+        # if add_markbetaling(betaling_data):
+        #     await interaction.response.send_message("✅ Betaling er blevet tilføjet!", ephemeral=True)
+        #     
+        #     # Opdater markbetalinger kanal
+        #     kanal = bot.get_channel(MARKBETALINGS_KANAL_ID)
+        #     if kanal:
+        #         await update_markbetalinger_embed(kanal)
+        # else:
+        #     await interaction.response.send_message("⛔ Fejl ved tilføjelse af betaling!", ephemeral=True)
+        await interaction.response.send_message("⛔ Markbetalinger er deaktiveret!", ephemeral=True)
 
-async def update_markbetalinger_embed(kanal):
-    """Opdater markbetalinger embed"""
-    try:
-        # Hent alle beskeder i kanalen fra botten
-        messages = []
-        async for message in kanal.history(limit=50):
-            if message.author == bot.user and (message.embeds or message.components):
-                messages.append(message)
-        
-        # Slet alle embed/component beskeder fra botten
-        for message in messages:
-            try:
-                await message.delete()
-            except:
-                pass
-        
-        # Send opdateret embed
-        await send_markbetalinger_embed(kanal)
-        
-    except Exception as e:
-        print(f"Fejl ved opdatering af markbetalinger embed: {e}")
+# Disabled: Markbetalinger
+# async def update_markbetalinger_embed(kanal):
+#     """Opdater markbetalinger embed"""
+#     try:
+#         # Hent alle beskeder i kanalen fra botten
+#         messages = []
+#         async for message in kanal.history(limit=50):
+#             if message.author == bot.user and (message.embeds or message.components):
+#                 messages.append(message)
+#         
+#         # Slet alle embed/component beskeder fra botten
+#         for message in messages:
+#             try:
+#                 await message.delete()
+#             except:
+#                 pass
+#         
+#         # Send opdateret embed
+#         await send_markbetalinger_embed(kanal)
+#         
+#     except Exception as e:
+#         print(f"Fejl ved opdatering af markbetalinger embed: {e}")
 
 class AdminControlView(View):
     def __init__(self):
@@ -802,7 +821,7 @@ class AdminControlView(View):
         view.add_item(RemovePermOpgaveSelect())
         await interaction.response.send_message("Vælg opgave at fjerne:", view=view, ephemeral=True)
 
-    @discord.ui.button(label="📋 Slet Medlemsopgave", style=discord.ButtonStyle.danger, emoji="🗑️")
+    @discord.ui.button(label="📋 Slet Vigtig Opgave", style=discord.ButtonStyle.danger, emoji="🗑️")
     async def delete_member_job(self, interaction: discord.Interaction, button: Button):
         if not tjek_admin_rolle(interaction.user):
             await interaction.response.send_message("⛔ Kun admins kan bruge denne funktion!", ephemeral=True)
@@ -818,28 +837,28 @@ class AdminControlView(View):
             return
         
         try:
-            stats_kanal = bot.get_channel(PUSHER_STATS_KANAL_ID)
+            stats_kanal = bot.get_channel(STATUS_KANAL_ID)
             if stats_kanal:
-                await update_pusher_stats_embed(stats_kanal)
-                await interaction.response.send_message("✅ Pusher statistikker er blevet opdateret!", ephemeral=True)
+                await update_prospect_supporter_stats_embed(stats_kanal)
+                await interaction.response.send_message("✅ Prospect/Supporter statistikker er blevet opdateret!", ephemeral=True)
             else:
                 await interaction.response.send_message("⛔ Stats kanal ikke fundet!", ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"⛔ Fejl ved opdatering: {e}", ephemeral=True)
 
-    @discord.ui.button(label="🔄 Opdater Pusher Kanal", style=discord.ButtonStyle.success, emoji="🎯")
-    async def refresh_pusher_channel(self, interaction: discord.Interaction, button: Button):
+    @discord.ui.button(label="🔄 Opdater Prospect/Supporter Kanal", style=discord.ButtonStyle.success, emoji="🎯")
+    async def refresh_prospect_supporter_channel(self, interaction: discord.Interaction, button: Button):
         if not tjek_admin_rolle(interaction.user):
             await interaction.response.send_message("⛔ Kun admins kan bruge denne funktion!", ephemeral=True)
             return
         
         try:
-            pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
-            if pusher_kanal:
-                await update_pusher_embed(pusher_kanal)
-                await interaction.response.send_message("✅ Pusher kanal er blevet opdateret!", ephemeral=True)
+            prospect_supporter_kanal = bot.get_channel(OPGAVE_KANAL_ID)
+            if prospect_supporter_kanal:
+                await update_prospect_supporter_embed(prospect_supporter_kanal)
+                await interaction.response.send_message("✅ Prospect/Supporter kanal er blevet opdateret!", ephemeral=True)
             else:
-                await interaction.response.send_message("⛔ Pusher kanal ikke fundet!", ephemeral=True)
+                await interaction.response.send_message("⛔ Prospect/Supporter kanal ikke fundet!", ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"⛔ Fejl ved opdatering: {e}", ephemeral=True)
 
@@ -850,9 +869,9 @@ class AdminControlView(View):
             return
         
         try:
-            medlem_kanal = bot.get_channel(MEDLEM_KANAL_ID)
+            medlem_kanal = bot.get_channel(OPGAVE_OPRETTELSES_KANAL_ID)
             if medlem_kanal:
-                await setup_medlem_kanal()
+                await setup_opgave_oprettelse_kanal()
                 await interaction.response.send_message("✅ Medlem kanal er blevet opdateret!", ephemeral=True)
             else:
                 await interaction.response.send_message("⛔ Medlem kanal ikke fundet!", ephemeral=True)
@@ -867,9 +886,9 @@ class AdminControlView(View):
         
         try:
             # Opdater alle kanaler
-            await setup_pusher_kanal()
-            await setup_medlem_kanal()
-            await setup_pusher_stats_kanal()
+            await setup_prospect_supporter_kanal()
+            await setup_opgave_oprettelse_kanal()
+            await setup_prospect_supporter_stats_kanal()
             await interaction.response.send_message("✅ Alle kanaler er blevet opdateret!", ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"⛔ Fejl ved opdatering: {e}", ephemeral=True)
@@ -885,7 +904,7 @@ class AdminControlView(View):
 
 class DeleteMemberJobModal(Modal):
     def __init__(self):
-        super().__init__(title="🗑️ Slet Medlemsopgave")
+        super().__init__(title="🗑️ Slet Vigtig Opgave")
         
         self.job_number = TextInput(
             label="Opgave Nummer",
@@ -923,10 +942,10 @@ class DeleteMemberJobModal(Modal):
                     except:
                         pass
             
-            # Opdater pusher kanal
-            pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
-            if pusher_kanal:
-                await update_pusher_embed(pusher_kanal)
+            # Opdater prospect_supporter kanal
+            prospect_supporter_kanal = bot.get_channel(OPGAVE_KANAL_ID)
+            if prospect_supporter_kanal:
+                await update_prospect_supporter_embed(prospect_supporter_kanal)
             
             embed = discord.Embed(
                 title="✅ Opgave Slettet",
@@ -966,16 +985,16 @@ class ResetSystemModal(Modal):
             # Clear all tables except permanent_jobs
             cursor.execute("DELETE FROM member_jobs")
             cursor.execute("DELETE FROM completed_jobs")
-            cursor.execute("DELETE FROM pusher_stats")
+            cursor.execute("DELETE FROM prospect_supporter_stats")
             cursor.execute("UPDATE settings SET value = '1' WHERE key = 'job_counter'")
             
             conn.commit()
             conn.close()
             
             # Opdater kanaler
-            await setup_pusher_kanal()
-            await setup_medlem_kanal()
-            await setup_pusher_stats_kanal()
+            await setup_prospect_supporter_kanal()
+            await setup_opgave_oprettelse_kanal()
+            await setup_prospect_supporter_stats_kanal()
             
             embed = discord.Embed(
                 title="✅ System Nulstillet",
@@ -1016,9 +1035,17 @@ class OpretOpgaveModal(Modal):
             max_length=100
         )
         
+        self.point_reward = TextInput(
+            label="Point Reward",
+            placeholder="Indtast antal point (fx 10, 50, 100)",
+            required=True,
+            max_length=10
+        )
+        
         self.add_item(self.opgave_titel)
         self.add_item(self.opgave_beskrivelse)
         self.add_item(self.belonning)
+        self.add_item(self.point_reward)
 
     async def on_submit(self, interaction: discord.Interaction):
         # Get next job counter from database
@@ -1029,29 +1056,37 @@ class OpretOpgaveModal(Modal):
         job_id = f"job_{job_counter}"
         conn.close()
         
+        # Parse point_reward
+        try:
+            point_reward = int(self.point_reward.value)
+        except ValueError:
+            await interaction.response.send_message("⛔ Ugyldig point værdi! Indtast et tal.", ephemeral=True)
+            return
+        
         ny_opgave = {
             "id": job_id,
             "titel": self.opgave_titel.value,
             "beskrivelse": self.opgave_beskrivelse.value,
             "belonning": self.belonning.value if self.belonning.value else "Ikke angivet",
+            "point_reward": point_reward,
             "oprettet_af": interaction.user.id,
             "oprettet_navn": interaction.user.display_name
         }
         
         if add_member_job(ny_opgave):
-            await interaction.response.send_message("✅ Din opgave er blevet oprettet og sendt til pusherne!", ephemeral=True)
+            await interaction.response.send_message("✅ Din opgave er blevet oprettet og sendt til prospect_supporterne!", ephemeral=True)
             
-            # Opdater pusher kanal
-            pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
-            if pusher_kanal:
-                await update_pusher_embed(pusher_kanal)
+            # Opdater prospect_supporter kanal
+            prospect_supporter_kanal = bot.get_channel(OPGAVE_KANAL_ID)
+            if prospect_supporter_kanal:
+                await update_prospect_supporter_embed(prospect_supporter_kanal)
         else:
             await interaction.response.send_message("⛔ Fejl ved oprettelse af opgave!", ephemeral=True)
 
-async def send_pusher_embed(kanal):
-    """Send pusher embed med alle jobs"""
+async def send_prospect_supporter_embed(kanal):
+    """Send prospect_supporter embed med alle jobs"""
     embed = discord.Embed(
-        title="🎯 OFFSET MC Pusher System",
+        title="🎯 Red Devils Prospect/Supporter System",
         description="**Oversigt over alle tilgængelige jobs og opgaver**",
         color=0xFFD700  # Guld farve
     )
@@ -1069,18 +1104,18 @@ async def send_pusher_embed(kanal):
     # Medlems opgaver
     member_jobs = get_member_jobs()
     embed.add_field(
-        name="📋 Medlems Opgaver",
+        name="📋 Vigtige Opgaver",
         value="Se medlems opgaver nedenfor" if member_jobs else "```\nIngen opgaver lige nu\n```",
         inline=False
     )
     
     embed.add_field(
         name="ℹ️ Information",
-        value="Tryk på nummerknapperne for at tage opgaver. Permanente opgaver opretter admin-pusher kanal.",
+        value="Tryk på nummerknapperne for at tage opgaver. Permanente opgaver opretter admin-prospect_supporter kanal.",
         inline=False
     )
     
-    embed.set_footer(text="OFFSET MC Pusher System v1.0")
+    embed.set_footer(text="Red Devils Prospect/Supporter System v1.0")
     embed.timestamp = datetime.now()
     
     # Send main embed (denne gemmes og opdateres ikke)
@@ -1137,11 +1172,11 @@ async def send_member_jobs_sections(kanal, member_jobs):
             member_jobs_text += f"       💰 {job['belonning']}\n"
             member_jobs_text += f"       👤 Af: {job['oprettet_navn']}\n"
             if job["status"] == "optaget":
-                member_jobs_text += f"       🎯 Pusher: {job['pusher_navn']}\n"
+                member_jobs_text += f"       🎯 Prospect/Supporter: {job['prospect_supporter_navn']}\n"
             member_jobs_text += "\n"
         
         # Member jobs embed for denne sektion
-        title = f"📋 Medlems Opgaver (Del {section_number})" if len(member_jobs) > JOBS_PER_SECTION else "📋 Medlems Opgaver"
+        title = f"📋 Vigtige Opgaver (Del {section_number})" if len(member_jobs) > JOBS_PER_SECTION else "📋 Vigtige Opgaver"
         member_embed = discord.Embed(
             title=title,
             description=member_jobs_text,
@@ -1188,8 +1223,8 @@ async def create_member_job_buttons_view(jobs):
     
     return view
 
-async def update_pusher_embed(kanal):
-    """Opdater pusher embed - bevar main info besked"""
+async def update_prospect_supporter_embed(kanal):
+    """Opdater prospect_supporter embed - bevar main info besked"""
     try:
         # Hent alle beskeder i kanalen
         messages = []
@@ -1219,11 +1254,11 @@ async def update_pusher_embed(kanal):
         await update_all_private_channel_buttons()
         
     except Exception as e:
-        print(f"Fejl ved opdatering af pusher embed: {e}")
+        print(f"Fejl ved opdatering af prospect_supporter embed: {e}")
         # Fallback: purge og send helt nyt
         try:
             await kanal.purge()
-            await send_pusher_embed(kanal)
+            await send_prospect_supporter_embed(kanal)
         except Exception as e2:
             print(f"Fallback fejl: {e2}")
 
@@ -1285,11 +1320,11 @@ async def update_private_channel_buttons(channel_id, job_id):
         print(f"Fejl ved opdatering af private kanal {channel_id}: {e}")
 
 
-async def send_medlem_embed(kanal):
+async def send_opgave_oprettelse_embed(kanal):
     """Send medlem embed med knap til at oprette opgaver"""
     embed = discord.Embed(
-        title="📝 Opret Pusher Opgave",
-        description="**Har du brug for hjælp fra vores pusherne?**",
+        title="📝 Opret Prospect/Supporter Opgave",
+        description="**Har du brug for hjælp fra vores prospect_supporterne?**",
         color=0x5865F2  # Discord blå
     )
     embed.set_thumbnail(url=LOGO_URL)
@@ -1299,7 +1334,7 @@ async def send_medlem_embed(kanal):
         value=(
             "1️⃣ Tryk på knappen nedenfor\n"
             "2️⃣ Udfyld formularen med din opgave\n"
-            "3️⃣ En pusher vil tage dit job\n"
+            "3️⃣ En prospect_supporter vil tage dit job\n"
             "4️⃣ I får en privat kanal til at snakke sammen"
         ),
         inline=False
@@ -1310,178 +1345,181 @@ async def send_medlem_embed(kanal):
         value=(
             "• Vær specifik i din beskrivelse\n"
             "• Angiv belønning hvis relevant\n"
-            "• Vær klar til at svare når en pusher tager jobbet"
+            "• Vær klar til at svare når en prospect_supporter tager jobbet"
         ),
         inline=False
     )
     
-    embed.set_footer(text="OFFSET MC Pusher System v1.0")
+    embed.set_footer(text="Red Devils Prospect/Supporter System v1.0")
     
     view = MedlemView()
     await kanal.send(embed=embed, view=view)
 
-async def setup_pusher_stats_kanal():
-    """Setup pusher statistik kanal"""
-    kanal = bot.get_channel(PUSHER_STATS_KANAL_ID)
+async def setup_prospect_supporter_stats_kanal():
+    """Setup prospect_supporter statistik kanal"""
+    kanal = bot.get_channel(STATUS_KANAL_ID)
     if kanal is None:
-        print(f"⚠️ Pusher stats kanal med ID {PUSHER_STATS_KANAL_ID} ikke fundet.")
+        print(f"⚠️ Prospect/Supporter stats kanal med ID {STATUS_KANAL_ID} ikke fundet.")
         return
     
     try:
         # Clear channel
         await kanal.purge()
-        print(f"🧹 Pusher stats kanal {kanal.name} er ryddet.")
+        print(f"🧹 Prospect/Supporter stats kanal {kanal.name} er ryddet.")
     except Exception as e:
-        print(f"❌ Fejl under rydning af pusher stats kanal: {e}")
+        print(f"❌ Fejl under rydning af prospect_supporter stats kanal: {e}")
     
     # Send stats embed
-    await send_pusher_stats_embed(kanal)
+    await send_prospect_supporter_stats_embed(kanal)
 
-async def setup_markbetalinger_kanal():
-    """Setup markbetalinger kanal"""
-    kanal = bot.get_channel(MARKBETALINGS_KANAL_ID)
-    if kanal is None:
-        print(f"⚠️ Markbetalinger kanal med ID {MARKBETALINGS_KANAL_ID} ikke fundet.")
-        return
-    
-    try:
-        # Clear channel
-        await kanal.purge()
-        print(f"🧹 Markbetalinger kanal {kanal.name} er ryddet.")
-    except Exception as e:
-        print(f"❌ Fejl under rydning af markbetalinger kanal: {e}")
-    
-    # Send markbetalinger embed
-    await send_markbetalinger_embed(kanal)
+# Disabled: Markbetalinger
+# async def setup_markbetalinger_kanal():
+#     """Setup markbetalinger kanal"""
+#     kanal = bot.get_channel(MARKBETALINGS_KANAL_ID)
+#     if kanal is None:
+#         print(f"⚠️ Markbetalinger kanal med ID {MARKBETALINGS_KANAL_ID} ikke fundet.")
+#         return
+#     
+#     try:
+#         # Clear channel
+#         await kanal.purge()
+#         print(f"🧹 Markbetalinger kanal {kanal.name} er ryddet.")
+#     except Exception as e:
+#         print(f"❌ Fejl under rydning af markbetalinger kanal: {e}")
+#     
+#     # Send markbetalinger embed
+#     await send_markbetalinger_embed(kanal)
 
-async def send_markbetalinger_embed(kanal):
-    """Send markbetalinger embed med liste over betalinger"""
-    # Send hoved-embed først med knap
-    main_embed = discord.Embed(
-        title="💳 Markbetalinger System",
-        description="**Oversigt over alle markbetalinger**",
-        color=0x00FF00
-    )
-    main_embed.set_thumbnail(url=LOGO_URL)
-    main_embed.add_field(
-        name="ℹ️ Information",
-        value="Tryk på knappen nedenfor for at tilføje en ny betaling.",
-        inline=False
-    )
-    main_embed.set_footer(text="OFFSET MC Markbetalinger System v1.0")
-    main_embed.timestamp = datetime.now()
-    
-    view = MarkbetalingView()
-    await kanal.send(embed=main_embed, view=view)
-    
-    # Hent alle betalinger
-    betalinger = get_markbetalinger()
-    
-    if not betalinger:
-        # Send tom liste besked
-        empty_embed = discord.Embed(
-            title="📋 Betalingsliste",
-            description="```\nIngen betalinger registreret endnu\n```",
-            color=0x00FF00
-        )
-        await kanal.send(embed=empty_embed)
-        return
-    
-    # Send betalingsliste opdelt i sektioner hvis nødvendigt
-    await send_markbetalinger_sections(kanal, betalinger)
+# Disabled: Markbetalinger
+# async def send_markbetalinger_embed(kanal):
+#     """Send markbetalinger embed med liste over betalinger"""
+#     # Send hoved-embed først med knap
+#     main_embed = discord.Embed(
+#         title="💳 Markbetalinger System",
+#         description="**Oversigt over alle markbetalinger**",
+#         color=0x00FF00
+#     )
+#     main_embed.set_thumbnail(url=LOGO_URL)
+#     main_embed.add_field(
+#         name="ℹ️ Information",
+#         value="Tryk på knappen nedenfor for at tilføje en ny betaling.",
+#         inline=False
+#     )
+#     main_embed.set_footer(text="Red Devils Markbetalinger System v1.0")
+#     main_embed.timestamp = datetime.now()
+#     
+#     view = MarkbetalingView()
+#     await kanal.send(embed=main_embed, view=view)
+#     
+#     # Hent alle betalinger
+#     betalinger = get_markbetalinger()
+#     
+#     if not betalinger:
+#         # Send tom liste besked
+#         empty_embed = discord.Embed(
+#             title="📋 Betalingsliste",
+#             description="```\nIngen betalinger registreret endnu\n```",
+#             color=0x00FF00
+#         )
+#         await kanal.send(embed=empty_embed)
+#         return
+#     
+#     # Send betalingsliste opdelt i sektioner hvis nødvendigt
+#     await send_markbetalinger_sections(kanal, betalinger)
 
-async def send_markbetalinger_sections(kanal, betalinger):
-    """Send markbetalinger opdelt i sektioner for at undgå Discord limits"""
-    # Discord field value limit er 1024 tegn
-    # Hver betaling linje er ca 60-70 tegn, så vi kan have ca 15-17 per sektion
-    BETALINGER_PER_SECTION = 15
-    nu_tid = datetime.now()
-    
-    # Opdel betalinger i grupper
-    for i in range(0, len(betalinger), BETALINGER_PER_SECTION):
-        section_betalinger = betalinger[i:i + BETALINGER_PER_SECTION]
-        section_number = (i // BETALINGER_PER_SECTION) + 1
-        
-        # Opret liste format
-        betalingsliste_text = "```\n"
-        for betaling in section_betalinger:
-            navn_padded = betaling["navn"][:20].ljust(20)
-            telefon_padded = betaling["telefon"][:15].ljust(15)
-            tidsperiode = betaling["tidsperiode"]
-            
-            # Beregn nedtælling (tid tilbage)
-            if betaling["udlobsdato"]:
-                udlobs_dato = datetime.strptime(betaling["udlobsdato"], "%Y-%m-%d %H:%M:%S")
-                tid_tilbage = udlobs_dato - nu_tid
-                
-                if tid_tilbage.total_seconds() <= 0:
-                    nedtaelling = "Udløbet"
-                else:
-                    dage = tid_tilbage.days
-                    timer, rest = divmod(tid_tilbage.seconds, 3600)
-                    minutter, _ = divmod(rest, 60)
-                    
-                    if dage > 0:
-                        nedtaelling = f"{dage}d {timer}t"
-                    elif timer > 0:
-                        nedtaelling = f"{timer}t {minutter}m"
-                    else:
-                        nedtaelling = f"{minutter}m"
-            else:
-                nedtaelling = "Ukendt"
-            
-            betalingsliste_text += f"{navn_padded} {telefon_padded} {tidsperiode:<10} {nedtaelling}\n"
-        betalingsliste_text += "```"
-        
-        # Opret embed for denne sektion
-        title = f"📋 Betalingsliste (Del {section_number})" if len(betalinger) > BETALINGER_PER_SECTION else "📋 Betalingsliste"
-        section_embed = discord.Embed(
-            title=title,
-            description=betalingsliste_text,
-            color=0x00FF00
-        )
-        
-        await kanal.send(embed=section_embed)
+# Disabled: Markbetalinger
+# async def send_markbetalinger_sections(kanal, betalinger):
+#     """Send markbetalinger opdelt i sektioner for at undgå Discord limits"""
+#     # Discord field value limit er 1024 tegn
+#     # Hver betaling linje er ca 60-70 tegn, så vi kan have ca 15-17 per sektion
+#     BETALINGER_PER_SECTION = 15
+#     nu_tid = datetime.now()
+#     
+#     # Opdel betalinger i grupper
+#     for i in range(0, len(betalinger), BETALINGER_PER_SECTION):
+#         section_betalinger = betalinger[i:i + BETALINGER_PER_SECTION]
+#         section_number = (i // BETALINGER_PER_SECTION) + 1
+#         
+#         # Opret liste format
+#         betalingsliste_text = "```\n"
+#         for betaling in section_betalinger:
+#             navn_padded = betaling["navn"][:20].ljust(20)
+#             telefon_padded = betaling["telefon"][:15].ljust(15)
+#             tidsperiode = betaling["tidsperiode"]
+#             
+#             # Beregn nedtælling (tid tilbage)
+#             if betaling["udlobsdato"]:
+#                 udlobs_dato = datetime.strptime(betaling["udlobsdato"], "%Y-%m-%d %H:%M:%S")
+#                 tid_tilbage = udlobs_dato - nu_tid
+#                 
+#                 if tid_tilbage.total_seconds() <= 0:
+#                     nedtaelling = "Udløbet"
+#                 else:
+#                     dage = tid_tilbage.days
+#                     timer, rest = divmod(tid_tilbage.seconds, 3600)
+#                     minutter, _ = divmod(rest, 60)
+#                     
+#                     if dage > 0:
+#                         nedtaelling = f"{dage}d {timer}t"
+#                     elif timer > 0:
+#                         nedtaelling = f"{timer}t {minutter}m"
+#                     else:
+#                         nedtaelling = f"{minutter}m"
+#             else:
+#                 nedtaelling = "Ukendt"
+#             
+#             betalingsliste_text += f"{navn_padded} {telefon_padded} {tidsperiode:<10} {nedtaelling}\n"
+#         betalingsliste_text += "```"
+#         
+#         # Opret embed for denne sektion
+#         title = f"📋 Betalingsliste (Del {section_number})" if len(betalinger) > BETALINGER_PER_SECTION else "📋 Betalingsliste"
+#         section_embed = discord.Embed(
+#             title=title,
+#             description=betalingsliste_text,
+#             color=0x00FF00
+#         )
+#         
+#         await kanal.send(embed=section_embed)
 
-def get_pusher_stats():
-    """Get pusher statistics from database"""
+def get_prospect_supporter_stats():
+    """Get prospect_supporter statistics from database"""
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT pusher_id, pusher_navn, total_jobs 
-            FROM pusher_stats 
-            ORDER BY total_jobs DESC
+            SELECT prospect_supporter_id, prospect_supporter_navn, total_points 
+            FROM prospect_supporter_stats 
+            ORDER BY total_points DESC
         """)
         stats = cursor.fetchall()
         conn.close()
         return stats
     except Exception as e:
-        print(f"Fejl ved hentning af pusher stats: {e}")
+        print(f"Fejl ved hentning af prospect_supporter stats: {e}")
         return []
 
-def get_current_pusher_stats(guild):
-    """Get pusher stats kun for folk med pusher rollen lige nu"""
+def get_current_prospect_supporter_stats(guild):
+    """Get prospect_supporter stats kun for folk med prospect_supporter rollen lige nu"""
     try:
-        pusher_role = discord.utils.get(guild.roles, id=PUSHER_ROLLE_ID)
-        if not pusher_role:
+        prospect_supporter_role = discord.utils.get(guild.roles, id=PROSPECT_SUPPORTER_ROLLE_IDS[0])
+        if not prospect_supporter_role:
             return []
         
-        # Hent alle pusher IDs der har rollen lige nu
-        current_pusher_ids = [member.id for member in pusher_role.members]
+        # Hent alle prospect_supporter IDs der har rollen lige nu
+        current_prospect_supporter_ids = [member.id for member in prospect_supporter_role.members]
         
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         
-        # Kun hent stats for folk der stadig har pusher rollen
-        if current_pusher_ids:
-            placeholders = ','.join(['?' for _ in current_pusher_ids])
+        # Kun hent stats for folk der stadig har prospect_supporter rollen
+        if current_prospect_supporter_ids:
+            placeholders = ','.join(['?' for _ in current_prospect_supporter_ids])
             cursor.execute(f"""
-                SELECT pusher_id, pusher_navn, total_jobs 
-                FROM pusher_stats 
-                WHERE pusher_id IN ({placeholders})
-                ORDER BY total_jobs DESC
-            """, current_pusher_ids)
+            SELECT prospect_supporter_id, prospect_supporter_navn, total_points 
+            FROM prospect_supporter_stats 
+            WHERE prospect_supporter_id IN ({placeholders})
+            ORDER BY total_points DESC
+            """, current_prospect_supporter_ids)
             stats = cursor.fetchall()
         else:
             stats = []
@@ -1489,7 +1527,7 @@ def get_current_pusher_stats(guild):
         conn.close()
         return stats
     except Exception as e:
-        print(f"Fejl ved hentning af aktuelle pusher stats: {e}")
+        print(f"Fejl ved hentning af aktuelle prospect_supporter stats: {e}")
         return []
 
 def get_recent_completed_jobs(limit=5):
@@ -1498,7 +1536,7 @@ def get_recent_completed_jobs(limit=5):
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT titel, pusher_navn, completed_tid, job_number
+            SELECT titel, prospect_supporter_navn, completed_tid, job_number
             FROM completed_jobs 
             ORDER BY completed_tid DESC 
             LIMIT ?
@@ -1510,28 +1548,28 @@ def get_recent_completed_jobs(limit=5):
         print(f"Fejl ved hentning af seneste jobs: {e}")
         return []
 
-def get_recent_completed_jobs_current_pushers(guild, limit=5):
-    """Get recent completed jobs kun fra folk der stadig har pusher rollen"""
+def get_recent_completed_jobs_current_prospect_supporters(guild, limit=5):
+    """Get recent completed jobs kun fra folk der stadig har prospect_supporter rollen"""
     try:
-        pusher_role = discord.utils.get(guild.roles, id=PUSHER_ROLLE_ID)
-        if not pusher_role:
+        prospect_supporter_role = discord.utils.get(guild.roles, id=PROSPECT_SUPPORTER_ROLLE_IDS[0])
+        if not prospect_supporter_role:
             return []
         
-        # Hent alle pusher IDs der har rollen lige nu
-        current_pusher_ids = [member.id for member in pusher_role.members]
+        # Hent alle prospect_supporter IDs der har rollen lige nu
+        current_prospect_supporter_ids = [member.id for member in prospect_supporter_role.members]
         
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         
-        if current_pusher_ids:
-            placeholders = ','.join(['?' for _ in current_pusher_ids])
+        if current_prospect_supporter_ids:
+            placeholders = ','.join(['?' for _ in current_prospect_supporter_ids])
             cursor.execute(f"""
-                SELECT titel, pusher_navn, completed_tid, job_number
+                SELECT titel, prospect_supporter_navn, completed_tid, job_number
                 FROM completed_jobs 
-                WHERE pusher_id IN ({placeholders})
+                WHERE prospect_supporter_id IN ({placeholders})
                 ORDER BY completed_tid DESC 
                 LIMIT ?
-            """, current_pusher_ids + [limit])
+            """, current_prospect_supporter_ids + [limit])
             jobs = cursor.fetchall()
         else:
             jobs = []
@@ -1539,98 +1577,98 @@ def get_recent_completed_jobs_current_pushers(guild, limit=5):
         conn.close()
         return jobs
     except Exception as e:
-        print(f"Fejl ved hentning af seneste jobs fra aktuelle pusherne: {e}")
+        print(f"Fejl ved hentning af seneste jobs fra aktuelle prospect_supporterne: {e}")
         return []
 
-async def ensure_all_pushers_in_stats(guild):
-    """Sørg for at alle med pusher rollen er i statistik tabellen og fjern gamle"""
+async def ensure_all_prospect_supporters_in_stats(guild):
+    """Sørg for at alle med prospect_supporter rollen er i statistik tabellen og fjern gamle"""
     try:
-        pusher_role = discord.utils.get(guild.roles, id=PUSHER_ROLLE_ID)
-        if not pusher_role:
-            print(f"⚠️ Pusher rolle med ID {PUSHER_ROLLE_ID} ikke fundet.")
+        prospect_supporter_role = discord.utils.get(guild.roles, id=PROSPECT_SUPPORTER_ROLLE_IDS[0])
+        if not prospect_supporter_role:
+            print(f"⚠️ Prospect/Supporter rolle med ID {PROSPECT_SUPPORTER_ROLLE_IDS[0]} ikke fundet.")
             return
         
-        current_pusher_ids = [member.id for member in pusher_role.members]
+        current_prospect_supporter_ids = [member.id for member in prospect_supporter_role.members]
         
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         
-        # Indsæt alle aktuelle pusherne i tabellen hvis de ikke allerede er der
-        for member in pusher_role.members:
+        # Indsæt alle aktuelle prospect_supporterne i tabellen hvis de ikke allerede er der
+        for member in prospect_supporter_role.members:
             cursor.execute("""
-                INSERT OR IGNORE INTO pusher_stats (pusher_id, pusher_navn, total_jobs)
+                INSERT OR IGNORE INTO prospect_supporter_stats (prospect_supporter_id, prospect_supporter_navn, total_points)
                 VALUES (?, ?, 0)
             """, (member.id, member.display_name))
         
-        # Opdater navne for eksisterende pusherne
-        for member in pusher_role.members:
+        # Opdater navne for eksisterende prospect_supporterne
+        for member in prospect_supporter_role.members:
             cursor.execute("""
-                UPDATE pusher_stats 
-                SET pusher_navn = ?, last_updated = CURRENT_TIMESTAMP
-                WHERE pusher_id = ?
+                UPDATE prospect_supporter_stats 
+                SET prospect_supporter_navn = ?, last_updated = CURRENT_TIMESTAMP
+                WHERE prospect_supporter_id = ?
             """, (member.display_name, member.id))
         
-        # VIGTIGT: Marker folk uden pusher rolle som inaktive
+        # VIGTIGT: Marker folk uden prospect_supporter rolle som inaktive
         # Vi sletter ikke deres data, men de vises ikke i listen
-        if current_pusher_ids:
-            placeholders = ','.join(['?' for _ in current_pusher_ids])
+        if current_prospect_supporter_ids:
+            placeholders = ','.join(['?' for _ in current_prospect_supporter_ids])
             cursor.execute(f"""
-                UPDATE pusher_stats 
+                UPDATE prospect_supporter_stats 
                 SET last_updated = CURRENT_TIMESTAMP
-                WHERE pusher_id NOT IN ({placeholders})
-            """, current_pusher_ids)
+                WHERE prospect_supporter_id NOT IN ({placeholders})
+            """, current_prospect_supporter_ids)
         
         conn.commit()
         conn.close()
-        print(f"✅ Real-time opdaterede pusher stats for {len(pusher_role.members)} aktive pusherne")
+        print(f"✅ Real-time opdaterede prospect_supporter stats for {len(prospect_supporter_role.members)} aktive prospect_supporterne")
         
     except Exception as e:
-        print(f"Fejl ved real-time opdatering af pusher stats: {e}")
+        print(f"Fejl ved real-time opdatering af prospect_supporter stats: {e}")
 
-async def send_pusher_stats_embed(kanal):
-    """Send pusher statistik embed"""
-    # Sørg for alle pusherne er i databasen
-    await ensure_all_pushers_in_stats(kanal.guild)
+async def send_prospect_supporter_stats_embed(kanal):
+    """Send prospect_supporter statistik embed"""
+    # Sørg for alle prospect_supporterne er i databasen
+    await ensure_all_prospect_supporters_in_stats(kanal.guild)
     
     embed = discord.Embed(
-        title="📊 Pusher Statistikker",
-        description="**Oversigt over alle pusherne og deres færdiggjorte jobs**",
+        title="📊 Prospect/Supporter Statistikker",
+        description="**Oversigt over alle prospect_supporterne og deres færdiggjorte jobs**",
         color=0x00FF00
     )
     embed.set_thumbnail(url=LOGO_URL)
     
-    # Get pusher stats kun for folk med pusher rollen lige nu
-    pusher_stats = get_current_pusher_stats(kanal.guild)
+    # Get prospect_supporter stats kun for folk med prospect_supporter rollen lige nu
+    prospect_supporter_stats = get_current_prospect_supporter_stats(kanal.guild)
     
-    if pusher_stats:
+    if prospect_supporter_stats:
         # Create rankings text med mørkeblå felt stil
         rankings_text = "```\n"
-        for i, (pusher_id, pusher_navn, total_jobs) in enumerate(pusher_stats, 1):
+        for i, (prospect_supporter_id, prospect_supporter_navn, total_points) in enumerate(prospect_supporter_stats, 1):
             # Pad navnene så de er aligned
-            navn_padded = pusher_navn[:20].ljust(20)
-            rankings_text += f"{i:2d}. {navn_padded} {total_jobs:3d} jobs\n"
+            navn_padded = prospect_supporter_navn[:20].ljust(20)
+            rankings_text += f"{i:2d}. {navn_padded} {total_points:3d} points\n"
         rankings_text += "```"
         
         embed.add_field(
-            name="🏆 Pusher Rankings",
+            name="🏆 Prospect/Supporter Rankings",
             value=rankings_text,
             inline=False
         )
     else:
         embed.add_field(
-            name="🏆 Pusher Rankings",
-            value="```\nIngen pusherne fundet\n```",
+            name="🏆 Prospect/Supporter Rankings",
+            value="```\nIngen prospect_supporterne fundet\n```",
             inline=False
         )
     
-    # Recent completed jobs med mørkeblå felt stil (kun fra aktuelle pusherne)
-    recent_jobs = get_recent_completed_jobs_current_pushers(kanal.guild, 5)
+    # Recent completed jobs med mørkeblå felt stil (kun fra aktuelle prospect_supporterne)
+    recent_jobs = get_recent_completed_jobs_current_prospect_supporters(kanal.guild, 5)
     if recent_jobs:
         recent_text = "```\n"
-        for titel, pusher_navn, completed_tid, job_number in recent_jobs:
+        for titel, prospect_supporter_navn, completed_tid, job_number in recent_jobs:
             date_str = completed_tid[:10] if completed_tid else "?"
             titel_short = titel[:25] + "..." if len(titel) > 25 else titel
-            recent_text += f"#{job_number:2d} {titel_short.ljust(28)} {pusher_navn[:15]}\n"
+            recent_text += f"#{job_number:2d} {titel_short.ljust(28)} {prospect_supporter_navn[:15]}\n"
             recent_text += f"    {date_str}\n\n"
         recent_text += "```"
         
@@ -1646,7 +1684,7 @@ async def send_pusher_stats_embed(kanal):
             inline=False
         )
     
-    embed.set_footer(text="OFFSET MC Pusher Stats v1.0")
+    embed.set_footer(text="Red Devils Prospect/Supporter Stats v1.0")
     embed.timestamp = datetime.now()
     
     # Send kun én embed (som på billedet)
@@ -1666,8 +1704,8 @@ class JobControlView(View):
             await interaction.response.send_message("⛔ Dette job eksisterer ikke længere!", ephemeral=True)
             return
         
-        # Tjek om brugeren er medlem eller pusher på jobbet
-        if interaction.user.id not in [job["oprettet_af"], job.get("pusher_id")]:
+        # Tjek om brugeren er medlem eller prospect_supporter på jobbet
+        if interaction.user.id not in [job["oprettet_af"], job.get("prospect_supporter_id")]:
             await interaction.response.send_message("⛔ Du kan kun cancellere jobs du er involveret i!", ephemeral=True)
             return
         
@@ -1675,10 +1713,10 @@ class JobControlView(View):
         if update_member_job_status(self.job_id, "ledig"):
             await interaction.response.send_message("✅ Jobbet er blevet cancelled og er nu ledigt igen!", ephemeral=False)
             
-            # Opdater pusher kanal
-            pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
-            if pusher_kanal:
-                await update_pusher_embed(pusher_kanal)
+            # Opdater prospect_supporter kanal
+            prospect_supporter_kanal = bot.get_channel(OPGAVE_KANAL_ID)
+            if prospect_supporter_kanal:
+                await update_prospect_supporter_embed(prospect_supporter_kanal)
             
             # Slet den private kanal efter 10 sekunder
             await asyncio.sleep(10)
@@ -1707,14 +1745,14 @@ class JobControlView(View):
         if complete_member_job(self.job_id):
             await interaction.response.send_message("🎉 Jobbet er markeret som færdigt! Godt arbejde!", ephemeral=False)
             
-            # Opdater pusher kanal og stats
-            pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
-            if pusher_kanal:
-                await update_pusher_embed(pusher_kanal)
+            # Opdater prospect_supporter kanal og stats
+            prospect_supporter_kanal = bot.get_channel(OPGAVE_KANAL_ID)
+            if prospect_supporter_kanal:
+                await update_prospect_supporter_embed(prospect_supporter_kanal)
             
-            stats_kanal = bot.get_channel(PUSHER_STATS_KANAL_ID)
+            stats_kanal = bot.get_channel(STATUS_KANAL_ID)
             if stats_kanal:
-                await update_pusher_stats_embed(stats_kanal)
+                await update_prospect_supporter_stats_embed(stats_kanal)
             
             # Slet den private kanal efter 10 sekunder
             await asyncio.sleep(10)
@@ -1739,10 +1777,10 @@ class JobControlView(View):
         if job and job["status"] != "faerdig":
             update_member_job_status(self.job_id, "ledig")
             
-            # Opdater pusher kanal
-            pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
-            if pusher_kanal:
-                await update_pusher_embed(pusher_kanal)
+            # Opdater prospect_supporter kanal
+            prospect_supporter_kanal = bot.get_channel(OPGAVE_KANAL_ID)
+            if prospect_supporter_kanal:
+                await update_prospect_supporter_embed(prospect_supporter_kanal)
         
         # Slet kanalen efter 5 sekunder
         await asyncio.sleep(5)
@@ -1751,13 +1789,13 @@ class JobControlView(View):
         except:
             pass
 
-async def update_pusher_stats_embed(kanal):
-    """Opdater pusher stats embed"""
+async def update_prospect_supporter_stats_embed(kanal):
+    """Opdater prospect_supporter stats embed"""
     try:
         await kanal.purge()
-        await send_pusher_stats_embed(kanal)
+        await send_prospect_supporter_stats_embed(kanal)
     except Exception as e:
-        print(f"Fejl ved opdatering af pusher stats embed: {e}")
+        print(f"Fejl ved opdatering af prospect_supporter stats embed: {e}")
 
 @bot.event
 async def on_interaction(interaction):
@@ -1771,7 +1809,7 @@ async def on_interaction(interaction):
             await handle_permanent_job(interaction, custom_id)
 
 async def handle_permanent_job(interaction, custom_id):
-    """Handle når en pusher tager en permanent opgave"""
+    """Handle når en prospect_supporter tager en permanent opgave"""
     job_number = int(custom_id.replace("permanent_job_", ""))
     
     # Hent permanent jobs
@@ -1782,11 +1820,11 @@ async def handle_permanent_job(interaction, custom_id):
         return
     
     job_title = permanent_jobs[job_number - 1]
-    pusher = interaction.user
+    prospect_supporter = interaction.user
     
     # Tjek om brugeren har admin rolle for at finde admin
     admin_user = None
-    if tjek_admin_rolle(pusher):
+    if tjek_admin_rolle(prospect_supporter):
         await interaction.response.send_message("⛔ Admins kan ikke tage permanente opgaver!", ephemeral=True)
         return
     
@@ -1819,13 +1857,13 @@ async def handle_permanent_job(interaction, custom_id):
             return
         
         # Opret kanal navn
-        kanal_navn = f"perm-{job_number}-{pusher.display_name[:10]}"
+        kanal_navn = f"perm-{job_number}-{prospect_supporter.display_name[:10]}"
         
         # Opret kanalen
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False),
             admin_user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-            pusher: discord.PermissionOverwrite(read_messages=True, send_messages=True)
+            prospect_supporter: discord.PermissionOverwrite(read_messages=True, send_messages=True)
         }
         
         privat_kanal = await kategori.create_text_channel(
@@ -1836,7 +1874,7 @@ async def handle_permanent_job(interaction, custom_id):
         # Send besked i den private kanal
         perm_embed = discord.Embed(
             title="🔄 Permanent Opgave Match!",
-            description=f"**{pusher.display_name}** vil arbejde på permanent opgave med **{admin_user.display_name}**",
+            description=f"**{prospect_supporter.display_name}** vil arbejde på permanent opgave med **{admin_user.display_name}**",
             color=0x5865F2
         )
         
@@ -1848,7 +1886,7 @@ async def handle_permanent_job(interaction, custom_id):
         
         perm_embed.add_field(
             name="👥 Deltagere",
-            value=f"**Pusher:** {pusher.mention}\n**Admin:** {admin_user.mention}",
+            value=f"**Prospect/Supporter:** {prospect_supporter.mention}\n**Admin:** {admin_user.mention}",
             inline=False
         )
         
@@ -1863,7 +1901,7 @@ async def handle_permanent_job(interaction, custom_id):
         # Opret view med kun close knap (ingen complete da det er permanent)
         perm_view = PermanentJobView(job_number, job_title)
         
-        await privat_kanal.send(f"{admin_user.mention} {pusher.mention}", embed=perm_embed, view=perm_view)
+        await privat_kanal.send(f"{admin_user.mention} {prospect_supporter.mention}", embed=perm_embed, view=perm_view)
         
         await interaction.response.send_message(f"✅ Permanent opgave taget! Privat kanal oprettet: {privat_kanal.mention}", ephemeral=True)
         
@@ -1879,7 +1917,7 @@ class PermanentJobView(View):
 
     @discord.ui.button(label="🔒 Luk Kanal", style=discord.ButtonStyle.danger)
     async def close_channel(self, interaction: discord.Interaction, button: Button):
-        # Tjek om brugeren er admin eller pusher i kanalen
+        # Tjek om brugeren er admin eller prospect_supporter i kanalen
         if not (tjek_admin_rolle(interaction.user) or 
                 interaction.channel.permissions_for(interaction.user).send_messages):
             await interaction.response.send_message("⛔ Du har ikke tilladelse til at lukke denne kanal!", ephemeral=True)
@@ -1911,7 +1949,7 @@ class PermanentJobView(View):
             pass
 
 async def handle_take_job(interaction, custom_id):
-    """Handle når en pusher tager et job"""
+    """Handle når en prospect_supporter tager et job"""
     job_id = custom_id.replace("take_job_", "")
     
     # Find jobbet
@@ -1939,9 +1977,9 @@ async def handle_take_job(interaction, custom_id):
             await interaction.response.send_message("⛔ Kunne ikke finde kategorien til private kanaler!", ephemeral=True)
             return
         
-        # Hent medlem og pusher
+        # Hent medlem og prospect_supporter
         medlem = await bot.fetch_user(job["oprettet_af"])
-        pusher = interaction.user
+        prospect_supporter = interaction.user
         
         # Opret kanal navn
         kanal_navn = f"job-{job['id']}-{medlem.display_name[:10]}"
@@ -1950,7 +1988,7 @@ async def handle_take_job(interaction, custom_id):
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False),
             medlem: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-            pusher: discord.PermissionOverwrite(read_messages=True, send_messages=True)
+            prospect_supporter: discord.PermissionOverwrite(read_messages=True, send_messages=True)
         }
         
         privat_kanal = await kategori.create_text_channel(
@@ -1961,7 +1999,7 @@ async def handle_take_job(interaction, custom_id):
         # Send besked i den private kanal
         job_embed = discord.Embed(
             title="🤝 Job Match!",
-            description=f"**{pusher.display_name}** har taget jobbet fra **{medlem.display_name}**",
+            description=f"**{prospect_supporter.display_name}** har taget jobbet fra **{medlem.display_name}**",
             color=0x00FF00
         )
         
@@ -1986,7 +2024,7 @@ async def handle_take_job(interaction, custom_id):
         job_embed.set_footer(text="I kan nu koordinere jeres samarbejde her!")
         
         # Send initial besked uden knapper
-        await privat_kanal.send(f"{medlem.mention} {pusher.mention}", embed=job_embed)
+        await privat_kanal.send(f"{medlem.mention} {prospect_supporter.mention}", embed=job_embed)
         
         # Send separat besked med knapper (denne kan opdateres senere)
         control_view = JobControlView(job_id)
@@ -1997,10 +2035,10 @@ async def handle_take_job(interaction, custom_id):
         
         await interaction.response.send_message(f"✅ Du har taget jobbet! Privat kanal oprettet: {privat_kanal.mention}", ephemeral=True)
         
-        # Opdater pusher kanal
-        pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
-        if pusher_kanal:
-            await update_pusher_embed(pusher_kanal)
+        # Opdater prospect_supporter kanal
+        prospect_supporter_kanal = bot.get_channel(OPGAVE_KANAL_ID)
+        if prospect_supporter_kanal:
+            await update_prospect_supporter_embed(prospect_supporter_kanal)
             
     except Exception as e:
         print(f"Fejl ved oprettelse af privat kanal: {e}")
@@ -2025,10 +2063,10 @@ class AddPermOpgaveModal(Modal):
         if add_permanent_job(ny_opgave):
             await interaction.response.send_message(f"✅ Permanent opgave tilføjet: {ny_opgave}", ephemeral=True)
             
-            # Opdater pusher kanal
-            pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
-            if pusher_kanal:
-                await update_pusher_embed(pusher_kanal)
+            # Opdater prospect_supporter kanal
+            prospect_supporter_kanal = bot.get_channel(OPGAVE_KANAL_ID)
+            if prospect_supporter_kanal:
+                await update_prospect_supporter_embed(prospect_supporter_kanal)
         else:
             await interaction.response.send_message("⛔ Denne opgave eksisterer allerede eller fejl ved tilføjelse!", ephemeral=True)
 
@@ -2052,10 +2090,10 @@ class EditPermOpgaveModal(Modal):
         if update_permanent_job(self.gammel_opgave, ny_tekst):
             await interaction.response.send_message(f"✅ Opgave opdateret:\n**Fra:** {self.gammel_opgave}\n**Til:** {ny_tekst}", ephemeral=True)
             
-            # Opdater pusher kanal
-            pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
-            if pusher_kanal:
-                await update_pusher_embed(pusher_kanal)
+            # Opdater prospect_supporter kanal
+            prospect_supporter_kanal = bot.get_channel(OPGAVE_KANAL_ID)
+            if prospect_supporter_kanal:
+                await update_prospect_supporter_embed(prospect_supporter_kanal)
         else:
             await interaction.response.send_message("⛔ Fejl ved opdatering af opgave!", ephemeral=True)
 
@@ -2080,10 +2118,10 @@ class RemovePermOpgaveSelect(Select):
         if remove_permanent_job(opgave_to_remove):
             await interaction.response.send_message(f"✅ Permanent opgave fjernet: {opgave_to_remove}", ephemeral=True)
             
-            # Opdater pusher kanal
-            pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
-            if pusher_kanal:
-                await update_pusher_embed(pusher_kanal)
+            # Opdater prospect_supporter kanal
+            prospect_supporter_kanal = bot.get_channel(OPGAVE_KANAL_ID)
+            if prospect_supporter_kanal:
+                await update_prospect_supporter_embed(prospect_supporter_kanal)
         else:
             await interaction.response.send_message("⛔ Fejl ved fjernelse af opgave!", ephemeral=True)
 
@@ -2112,9 +2150,9 @@ def tjek_admin_rolle(user):
     """Tjek om brugeren har admin rollen eller er absolut admin"""
     return user.id == ABSOLUT_ADMIN_ID or any(role.id in ADMIN_ROLLE_IDS for role in user.roles)
 
-@bot.command(name="pusherbot")
-async def pusherbot_admin(ctx):
-    """Admin kommandoer til pusher bot"""
+@bot.command(name="prospect_supporterbot")
+async def prospect_supporterbot_admin(ctx):
+    """Admin kommandoer til prospect_supporter bot"""
     
     # Tjek admin rolle
     if not tjek_admin_rolle(ctx.author):
@@ -2128,7 +2166,7 @@ async def pusherbot_admin(ctx):
         pass
     
     embed = discord.Embed(
-        title="🔧 OFFSET MC Admin Kontrol Panel",
+        title="🔧 Red Devils Admin Kontrol Panel",
         description="**Kun synligt for administratorer**",
         color=0xFF5733
     )
@@ -2139,7 +2177,7 @@ async def pusherbot_admin(ctx):
         inline=False
     )
     embed.add_field(
-        name="📋 Medlemsopgaver",
+        name="📋 Vigtig Opgaver",
         value="Slet medlemsopgaver og opdater kanaler",
         inline=False
     )
@@ -2153,9 +2191,9 @@ async def pusherbot_admin(ctx):
     admin_view = AdminControlView()
     await ctx.send(embed=embed, view=admin_view)
 
-@bot.command(name="pusherbot_old")
-async def pusherbot_admin_old(ctx, action=None, subaction=None, *args):
-    """Gamle admin kommandoer til pusher bot (backup)"""
+@bot.command(name="prospect_supporterbot_old")
+async def prospect_supporterbot_admin_old(ctx, action=None, subaction=None, *args):
+    """Gamle admin kommandoer til prospect_supporter bot (backup)"""
     
     # Tjek admin rolle
     if not tjek_admin_rolle(ctx.author):
@@ -2163,24 +2201,24 @@ async def pusherbot_admin_old(ctx, action=None, subaction=None, *args):
         return
     
     if action.lower() not in ["permopg", "mopg"]:
-        await ctx.send("⛔ Ukendt kommando! Brug `!pusherbot permopg [add/edit/remove]` eller `!pusherbot mopg del [nummer]`")
+        await ctx.send("⛔ Ukendt kommando! Brug `!prospect_supporterbot permopg [add/edit/remove]` eller `!prospect_supporterbot mopg del [nummer]`")
         return
     
     # Handle mopg (medlems opgaver) kommandoer
     if action.lower() == "mopg":
         if subaction is None or subaction.lower() != "del":
-            await ctx.send("⛔ Brug: `!pusherbot mopg del [nummer]`")
+            await ctx.send("⛔ Brug: `!prospect_supporterbot mopg del [nummer]`")
             return
         
         # Tjek om der er angivet et nummer
         if len(args) == 0:
-            await ctx.send("⛔ Du skal angive opgave nummeret! Brug: `!pusherbot mopg del [nummer]`")
+            await ctx.send("⛔ Du skal angive opgave nummeret! Brug: `!prospect_supporterbot mopg del [nummer]`")
             return
         
         try:
             job_number = int(args[0])
         except ValueError:
-            await ctx.send("⛔ Ugyldigt nummer! Brug: `!pusherbot mopg del [nummer]`")
+            await ctx.send("⛔ Ugyldigt nummer! Brug: `!prospect_supporterbot mopg del [nummer]`")
             return
         
         # Find jobbet
@@ -2203,10 +2241,10 @@ async def pusherbot_admin_old(ctx, action=None, subaction=None, *args):
                     except:
                         pass
             
-            # Opdater pusher kanal
-            pusher_kanal = bot.get_channel(PUSHER_KANAL_ID)
-            if pusher_kanal:
-                await update_pusher_embed(pusher_kanal)
+            # Opdater prospect_supporter kanal
+            prospect_supporter_kanal = bot.get_channel(OPGAVE_KANAL_ID)
+            if prospect_supporter_kanal:
+                await update_prospect_supporter_embed(prospect_supporter_kanal)
             
             embed = discord.Embed(
                 title="✅ Opgave Slettet",
@@ -2226,7 +2264,7 @@ async def pusherbot_admin_old(ctx, action=None, subaction=None, *args):
     if subaction is None:
         embed = discord.Embed(
             title="🔧 Permanent Opgave Admin",
-            description="**Brug:** `!pusherbot permopg [add/edit/remove]`",
+            description="**Brug:** `!prospect_supporterbot permopg [add/edit/remove]`",
             color=0xFF5733
         )
         embed.add_field(
@@ -2279,16 +2317,16 @@ async def pusherbot_admin_old(ctx, action=None, subaction=None, *args):
 
 @bot.command()
 async def refresh_stats(ctx):
-    """Genopfrisk pusher statistikker manuelt (admin kun)"""
+    """Genopfrisk prospect_supporter statistikker manuelt (admin kun)"""
     if not tjek_admin_rolle(ctx.author):
         await ctx.send("⛔ Du har ikke tilladelse til at opdatere stats!")
         return
     
     try:
-        stats_kanal = bot.get_channel(PUSHER_STATS_KANAL_ID)
+        stats_kanal = bot.get_channel(STATUS_KANAL_ID)
         if stats_kanal:
-            await update_pusher_stats_embed(stats_kanal)
-            await ctx.send("✅ Pusher statistikker er blevet opdateret!")
+            await update_prospect_supporter_stats_embed(stats_kanal)
+            await ctx.send("✅ Prospect/Supporter statistikker er blevet opdateret!")
         else:
             await ctx.send("⛔ Stats kanal ikke fundet!")
     except Exception as e:
@@ -2309,16 +2347,16 @@ async def admin_reset(ctx):
         # Clear all tables except permanent_jobs
         cursor.execute("DELETE FROM member_jobs")
         cursor.execute("DELETE FROM completed_jobs")
-        cursor.execute("DELETE FROM pusher_stats")
+        cursor.execute("DELETE FROM prospect_supporter_stats")
         cursor.execute("UPDATE settings SET value = '1' WHERE key = 'job_counter'")
         
         conn.commit()
         conn.close()
         
         # Opdater kanaler
-        await setup_pusher_kanal()
-        await setup_medlem_kanal()
-        await setup_pusher_stats_kanal()
+        await setup_prospect_supporter_kanal()
+        await setup_opgave_oprettelse_kanal()
+        await setup_prospect_supporter_stats_kanal()
         
         await ctx.send("✅ Alle jobs og statistikker er blevet nulstillet!")
         
@@ -2328,17 +2366,17 @@ async def admin_reset(ctx):
 
 @tasks.loop(minutes=5)  # Tjek hver 5. minut som backup
 async def periodic_stats_check():
-    """Periodisk tjek af pusher stats og markbetalinger som backup til events"""
+    """Periodisk tjek af prospect_supporter stats og markbetalinger som backup til events"""
     try:
-        stats_kanal = bot.get_channel(PUSHER_STATS_KANAL_ID)
+        stats_kanal = bot.get_channel(STATUS_KANAL_ID)
         if stats_kanal:
             # Stille opdatering uden at spamme logs
-            await update_pusher_stats_embed(stats_kanal)
+            await update_prospect_supporter_stats_embed(stats_kanal)
         
-        # Opdater også markbetalinger embed for at opdatere nedtællingen
-        markbetalinger_kanal = bot.get_channel(MARKBETALINGS_KANAL_ID)
-        if markbetalinger_kanal:
-            await update_markbetalinger_embed(markbetalinger_kanal)
+        # Disabled: Markbetalinger
+        # markbetalinger_kanal = bot.get_channel(MARKBETALINGS_KANAL_ID)
+        # if markbetalinger_kanal:
+        #     await update_markbetalinger_embed(markbetalinger_kanal)
         
         print("🔄 Periodisk stats og markbetalinger check udført")
     except Exception as e:

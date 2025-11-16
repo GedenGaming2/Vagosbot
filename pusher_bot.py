@@ -41,6 +41,7 @@ LOGO_URL = "https://cdn.discordapp.com/attachments/1439332163131674755/143933220
 OPGAVE_KANAL_ID = 1439329928679129211
 OPGAVE_OPRETTELSES_KANAL_ID = 1439330014838522159
 STATUS_KANAL_ID = 1439329956327981206
+ADMIN_PANEL_KANAL_ID = 1439585440016367795
 PRIVAT_KATEGORI_ID = 1439340235820499036
 
 # Gamle prospect_supporter konstanter (for reference - kan fjernes senere)
@@ -821,78 +822,6 @@ class AdminControlView(View):
         view = View()
         view.add_item(RemovePermOpgaveSelect())
         await interaction.response.send_message("Vælg opgave at fjerne:", view=view, ephemeral=True)
-
-    @discord.ui.button(label="📋 Slet Vigtig Opgave", style=discord.ButtonStyle.danger, emoji="🗑️")
-    async def delete_member_job(self, interaction: discord.Interaction, button: Button):
-        if not tjek_admin_rolle(interaction.user):
-            await interaction.response.send_message("⛔ Kun admins kan bruge denne funktion!", ephemeral=True)
-            return
-        
-        # Send modal til at indtaste job nummer
-        await interaction.response.send_modal(DeleteMemberJobModal())
-
-    @discord.ui.button(label="🔄 Opdater Stats", style=discord.ButtonStyle.success, emoji="📊")
-    async def refresh_stats(self, interaction: discord.Interaction, button: Button):
-        if not tjek_admin_rolle(interaction.user):
-            await interaction.response.send_message("⛔ Kun admins kan bruge denne funktion!", ephemeral=True)
-            return
-        
-        try:
-            stats_kanal = bot.get_channel(STATUS_KANAL_ID)
-            if stats_kanal:
-                await update_prospect_supporter_stats_embed(stats_kanal)
-                await interaction.response.send_message("✅ Prospect/Supporter statistikker er blevet opdateret!", ephemeral=True)
-            else:
-                await interaction.response.send_message("⛔ Stats kanal ikke fundet!", ephemeral=True)
-        except Exception as e:
-            await interaction.response.send_message(f"⛔ Fejl ved opdatering: {e}", ephemeral=True)
-
-    @discord.ui.button(label="🔄 Opdater Prospect/Supporter Kanal", style=discord.ButtonStyle.success, emoji="🎯")
-    async def refresh_prospect_supporter_channel(self, interaction: discord.Interaction, button: Button):
-        if not tjek_admin_rolle(interaction.user):
-            await interaction.response.send_message("⛔ Kun admins kan bruge denne funktion!", ephemeral=True)
-            return
-        
-        try:
-            prospect_supporter_kanal = bot.get_channel(OPGAVE_KANAL_ID)
-            if prospect_supporter_kanal:
-                await update_prospect_supporter_embed(prospect_supporter_kanal)
-                await interaction.response.send_message("✅ Prospect/Supporter kanal er blevet opdateret!", ephemeral=True)
-            else:
-                await interaction.response.send_message("⛔ Prospect/Supporter kanal ikke fundet!", ephemeral=True)
-        except Exception as e:
-            await interaction.response.send_message(f"⛔ Fejl ved opdatering: {e}", ephemeral=True)
-
-    @discord.ui.button(label="🔄 Opdater Medlem Kanal", style=discord.ButtonStyle.success, emoji="📝")
-    async def refresh_member_channel(self, interaction: discord.Interaction, button: Button):
-        if not tjek_admin_rolle(interaction.user):
-            await interaction.response.send_message("⛔ Kun admins kan bruge denne funktion!", ephemeral=True)
-            return
-        
-        try:
-            medlem_kanal = bot.get_channel(OPGAVE_OPRETTELSES_KANAL_ID)
-            if medlem_kanal:
-                await setup_opgave_oprettelse_kanal()
-                await interaction.response.send_message("✅ Medlem kanal er blevet opdateret!", ephemeral=True)
-            else:
-                await interaction.response.send_message("⛔ Medlem kanal ikke fundet!", ephemeral=True)
-        except Exception as e:
-            await interaction.response.send_message(f"⛔ Fejl ved opdatering: {e}", ephemeral=True)
-
-    @discord.ui.button(label="🔄 Opdater Alle Kanaler", style=discord.ButtonStyle.success, emoji="🔄")
-    async def refresh_all_channels(self, interaction: discord.Interaction, button: Button):
-        if not tjek_admin_rolle(interaction.user):
-            await interaction.response.send_message("⛔ Kun admins kan bruge denne funktion!", ephemeral=True)
-            return
-        
-        try:
-            # Opdater alle kanaler
-            await setup_prospect_supporter_kanal()
-            await setup_opgave_oprettelse_kanal()
-            await setup_prospect_supporter_stats_kanal()
-            await interaction.response.send_message("✅ Alle kanaler er blevet opdateret!", ephemeral=True)
-        except Exception as e:
-            await interaction.response.send_message(f"⛔ Fejl ved opdatering: {e}", ephemeral=True)
 
     @discord.ui.button(label="⚠️ NULSTIL SYSTEM", style=discord.ButtonStyle.danger, emoji="🗑️")
     async def reset_system(self, interaction: discord.Interaction, button: Button):
@@ -1769,8 +1698,8 @@ class JobControlView(View):
             await interaction.response.send_message("⛔ Dette job eksisterer ikke længere!", ephemeral=True)
             return
         
-        # Tjek om brugeren er medlem eller prospect_supporter på jobbet
-        if interaction.user.id not in [job["oprettet_af"], job.get("prospect_supporter_id")]:
+        # Tjek om brugeren er medlem eller prospect_supporter på jobbet (DEV rolle bypasser)
+        if not tjek_dev_rolle(interaction.user) and interaction.user.id not in [job["oprettet_af"], job.get("prospect_supporter_id")]:
             await interaction.response.send_message("⛔ Du kan kun cancellere jobs du er involveret i!", ephemeral=True)
             return
         
@@ -1801,8 +1730,8 @@ class JobControlView(View):
             await interaction.response.send_message("⛔ Dette job eksisterer ikke længere!", ephemeral=True)
             return
         
-        # Tjek om brugeren er medlemmet der oprettede jobbet
-        if interaction.user.id != job.get("oprettet_af"):
+        # Tjek om brugeren er medlemmet der oprettede jobbet (DEV rolle bypasser)
+        if not tjek_dev_rolle(interaction.user) and interaction.user.id != job.get("oprettet_af"):
             await interaction.response.send_message("⛔ Kun medlemmet der oprettede jobbet kan markere det som færdigt!", ephemeral=True)
             return
         
@@ -1830,8 +1759,8 @@ class JobControlView(View):
 
     @discord.ui.button(label="🔨 FORCE LUK", style=discord.ButtonStyle.secondary, emoji="⚠️")
     async def force_close(self, interaction: discord.Interaction, button: Button):
-        # Tjek om brugeren er super admin
-        if interaction.user.id != ABSOLUT_ADMIN_ID:
+        # Tjek om brugeren er super admin eller dev (DEV rolle bypasser)
+        if not tjek_dev_rolle(interaction.user) and interaction.user.id != ABSOLUT_ADMIN_ID:
             await interaction.response.send_message("⛔ Kun super admin kan force-lukke tickets!", ephemeral=True)
             return
         
@@ -1888,10 +1817,15 @@ async def handle_permanent_job(interaction, custom_id):
     prospect_supporter = interaction.user
     
     # Tjek om brugeren har admin rolle for at finde admin
-    admin_user = None
-    if tjek_admin_rolle(prospect_supporter):
+    # DEV rolle bypasser alt - tjek først
+    if tjek_dev_rolle(prospect_supporter):
+        # Dev rolle kan altid tage permanente opgaver
+        pass
+    elif tjek_admin_rolle(prospect_supporter):
         await interaction.response.send_message("⛔ Admins kan ikke tage permanente opgaver!", ephemeral=True)
         return
+    
+    admin_user = None
     
     # Find en admin til at koordinere med
     guild = interaction.guild
@@ -1982,8 +1916,8 @@ class PermanentJobView(View):
 
     @discord.ui.button(label="🔒 Luk Kanal", style=discord.ButtonStyle.danger)
     async def close_channel(self, interaction: discord.Interaction, button: Button):
-        # Tjek om brugeren er admin eller prospect_supporter i kanalen
-        if not (tjek_admin_rolle(interaction.user) or 
+        # Tjek om brugeren er admin eller prospect_supporter i kanalen (DEV rolle bypasser)
+        if not tjek_dev_rolle(interaction.user) and not (tjek_admin_rolle(interaction.user) or 
                 interaction.channel.permissions_for(interaction.user).send_messages):
             await interaction.response.send_message("⛔ Du har ikke tilladelse til at lukke denne kanal!", ephemeral=True)
             return
@@ -1999,8 +1933,8 @@ class PermanentJobView(View):
 
     @discord.ui.button(label="🔨 FORCE LUK", style=discord.ButtonStyle.secondary, emoji="⚠️")
     async def force_close(self, interaction: discord.Interaction, button: Button):
-        # Tjek om brugeren er super admin
-        if interaction.user.id != ABSOLUT_ADMIN_ID:
+        # Tjek om brugeren er super admin eller dev (DEV rolle bypasser)
+        if not tjek_dev_rolle(interaction.user) and interaction.user.id != ABSOLUT_ADMIN_ID:
             await interaction.response.send_message("⛔ Kun super admin kan force-lukke tickets!", ephemeral=True)
             return
         
@@ -2227,7 +2161,7 @@ def tjek_medlem_rolle(user):
         return True
     return user.get_role(FULDT_MEDLEM_ROLLE_ID) is not None
 
-@bot.command(name="prospect_supporterbot")
+@bot.command(name="prospect_supporterbot", aliases=["prospectbot"])
 async def prospect_supporterbot_admin(ctx):
     """Admin kommandoer til prospect_supporter bot"""
     
@@ -2266,7 +2200,14 @@ async def prospect_supporterbot_admin(ctx):
     embed.set_footer(text="Kun du kan se denne.")
     
     admin_view = AdminControlView()
-    await ctx.send(embed=embed, view=admin_view)
+    
+    # Send kontrolpanelet i den faste admin-panel kanal
+    kanal = bot.get_channel(ADMIN_PANEL_KANAL_ID)
+    if kanal:
+        await kanal.send(embed=embed, view=admin_view)
+    else:
+        # Fallback: send i den kanal hvor kommandoen blev kørt
+        await ctx.send(embed=embed, view=admin_view)
 
 @bot.command(name="prospect_supporterbot_old")
 async def prospect_supporterbot_admin_old(ctx, action=None, subaction=None, *args):

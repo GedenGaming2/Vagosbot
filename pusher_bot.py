@@ -341,7 +341,11 @@ def get_all_active_private_channels():
         return []
 
 def complete_member_job(job_id):
-    """Complete a member job and update stats"""
+    """Complete a member job and update stats (bruges til legacy/fallback)"""
+    return complete_member_job_with_points(job_id, 0)
+
+def complete_member_job_with_points(job_id, point_reward):
+    """Complete a member job and update stats with specified point reward"""
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
@@ -352,9 +356,6 @@ def complete_member_job(job_id):
         if not job_row:
             conn.close()
             return False
-        
-        # Get point_reward (column 4 if exists, else 0)
-        point_reward = job_row[4] if len(job_row) > 4 else 0
         
         # Move to completed_jobs
         cursor.execute("""
@@ -975,17 +976,9 @@ class OpretOpgaveModal(Modal):
             max_length=100
         )
         
-        self.point_reward = TextInput(
-            label="Point Reward",
-            placeholder="Indtast antal point (fx 10, 50, 100)",
-            required=True,
-            max_length=10
-        )
-        
         self.add_item(self.opgave_titel)
         self.add_item(self.opgave_beskrivelse)
         self.add_item(self.belonning)
-        self.add_item(self.point_reward)
 
     async def on_submit(self, interaction: discord.Interaction):
         # Get next job counter from database
@@ -996,19 +989,12 @@ class OpretOpgaveModal(Modal):
         job_id = f"job_{job_counter}"
         conn.close()
         
-        # Parse point_reward
-        try:
-            point_reward = int(self.point_reward.value)
-        except ValueError:
-            await interaction.response.send_message("⛔ Ugyldig point værdi! Indtast et tal.", ephemeral=True)
-            return
-        
         ny_opgave = {
             "id": job_id,
             "titel": self.opgave_titel.value,
             "beskrivelse": self.opgave_beskrivelse.value,
             "belonning": self.belonning.value if self.belonning.value else "Ikke angivet",
-            "point_reward": point_reward,
+            "point_reward": 0,  # Points tildeles når opgaven lukkes
             "oprettet_af": interaction.user.id,
             "oprettet_navn": interaction.user.display_name
         }
@@ -1022,6 +1008,55 @@ class OpretOpgaveModal(Modal):
                 await update_prospect_supporter_embed(prospect_supporter_kanal)
         else:
             await interaction.response.send_message("⛔ Fejl ved oprettelse af opgave!", ephemeral=True)
+
+class CompleteJobModal(Modal):
+    def __init__(self, job_id, channel):
+        super().__init__(title="✅ Afslut Opgave")
+        self.job_id = job_id
+        self.channel = channel
+        
+        self.point_reward = TextInput(
+            label="Point Reward",
+            placeholder="Indtast antal point til prospect/supporter (fx 10, 50, 100)",
+            required=True,
+            max_length=10
+        )
+        
+        self.add_item(self.point_reward)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # Parse point_reward
+        try:
+            point_reward = int(self.point_reward.value)
+        except ValueError:
+            await interaction.response.send_message("⛔ Ugyldig point værdi! Indtast et tal.", ephemeral=True)
+            return
+        
+        if point_reward < 0:
+            await interaction.response.send_message("⛔ Point kan ikke være negative!", ephemeral=True)
+            return
+        
+        # Marker job som færdigt med points
+        if complete_member_job_with_points(self.job_id, point_reward):
+            await interaction.response.send_message(f"🎉 Jobbet er markeret som færdigt! **{point_reward} point** tildelt. Godt arbejde!", ephemeral=False)
+            
+            # Opdater prospect_supporter kanal og stats
+            prospect_supporter_kanal = bot.get_channel(OPGAVE_KANAL_ID)
+            if prospect_supporter_kanal:
+                await update_prospect_supporter_embed(prospect_supporter_kanal)
+            
+            stats_kanal = bot.get_channel(STATUS_KANAL_ID)
+            if stats_kanal:
+                await update_prospect_supporter_stats_embed(stats_kanal)
+            
+            # Slet den private kanal efter 10 sekunder
+            await asyncio.sleep(10)
+            try:
+                await self.channel.delete()
+            except:
+                pass
+        else:
+            await interaction.response.send_message("⛔ Fejl ved færdiggørelse af job!", ephemeral=True)
 
 async def send_prospect_supporter_embed(kanal):
     """Send prospect_supporter embed med alle jobs"""
@@ -1797,27 +1832,8 @@ class JobControlView(View):
             await interaction.response.send_message("⛔ Kun medlemmet der oprettede jobbet kan markere det som færdigt!", ephemeral=True)
             return
         
-        # Marker job som færdigt
-        if complete_member_job(self.job_id):
-            await interaction.response.send_message("🎉 Jobbet er markeret som færdigt! Godt arbejde!", ephemeral=False)
-            
-            # Opdater prospect_supporter kanal og stats
-            prospect_supporter_kanal = bot.get_channel(OPGAVE_KANAL_ID)
-            if prospect_supporter_kanal:
-                await update_prospect_supporter_embed(prospect_supporter_kanal)
-            
-            stats_kanal = bot.get_channel(STATUS_KANAL_ID)
-            if stats_kanal:
-                await update_prospect_supporter_stats_embed(stats_kanal)
-            
-            # Slet den private kanal efter 10 sekunder
-            await asyncio.sleep(10)
-            try:
-                await interaction.channel.delete()
-            except:
-                pass
-        else:
-            await interaction.response.send_message("⛔ Fejl ved færdiggørelse af job!", ephemeral=True)
+        # Vis modal til at indtaste point reward
+        await interaction.response.send_modal(CompleteJobModal(self.job_id, interaction.channel))
 
     @discord.ui.button(label="🔨 FORCE LUK", style=discord.ButtonStyle.secondary, emoji="⚠️")
     async def force_close(self, interaction: discord.Interaction, button: Button):

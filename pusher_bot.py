@@ -1016,21 +1016,23 @@ class CompleteJobModal(Modal):
         self.channel = channel
         
         self.point_reward = TextInput(
-            label="Point Reward",
-            placeholder="Indtast antal point til prospect/supporter (fx 10, 50, 100)",
-            required=True,
+            label="Point Reward (valgfri)",
+            placeholder="Indtast antal point (lad stå tom eller 0 for ingen point)",
+            required=False,
             max_length=10
         )
         
         self.add_item(self.point_reward)
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Parse point_reward
-        try:
-            point_reward = int(self.point_reward.value)
-        except ValueError:
-            await interaction.response.send_message("⛔ Ugyldig point værdi! Indtast et tal.", ephemeral=True)
-            return
+        # Parse point_reward - tom eller ugyldig = 0
+        point_reward = 0
+        if self.point_reward.value.strip():
+            try:
+                point_reward = int(self.point_reward.value)
+            except ValueError:
+                await interaction.response.send_message("⛔ Ugyldig point værdi! Indtast et tal eller lad stå tom.", ephemeral=True)
+                return
         
         if point_reward < 0:
             await interaction.response.send_message("⛔ Point kan ikke være negative!", ephemeral=True)
@@ -1038,7 +1040,10 @@ class CompleteJobModal(Modal):
         
         # Marker job som færdigt med points
         if complete_member_job_with_points(self.job_id, point_reward):
-            await interaction.response.send_message(f"🎉 Jobbet er markeret som færdigt! **{point_reward} point** tildelt. Godt arbejde!", ephemeral=False)
+            if point_reward > 0:
+                await interaction.response.send_message(f"🎉 Jobbet er markeret som færdigt! **{point_reward} point** tildelt. Godt arbejde!", ephemeral=False)
+            else:
+                await interaction.response.send_message("🎉 Jobbet er markeret som færdigt! Godt arbejde!", ephemeral=False)
             
             # Opdater prospect_supporter kanal og stats
             prospect_supporter_kanal = bot.get_channel(OPGAVE_KANAL_ID)
@@ -1975,8 +1980,8 @@ async def handle_permanent_job(interaction, custom_id):
         
         perm_embed.set_footer(text="Permanent Opgave Koordination")
         
-        # Opret view med kun close knap (ingen complete da det er permanent)
-        perm_view = PermanentJobView(job_number, job_title)
+        # Opret view med close og point knapper
+        perm_view = PermanentJobView(job_number, job_title, prospect_supporter.id)
         
         await privat_kanal.send(f"{admin_user.mention} {prospect_supporter.mention}", embed=perm_embed, view=perm_view)
         
@@ -1987,10 +1992,21 @@ async def handle_permanent_job(interaction, custom_id):
         await interaction.response.send_message("⛔ Fejl ved oprettelse af privat kanal!", ephemeral=True)
 
 class PermanentJobView(View):
-    def __init__(self, job_number, job_title):
+    def __init__(self, job_number, job_title, prospect_supporter_id=None):
         super().__init__(timeout=None)
         self.job_number = job_number
         self.job_title = job_title
+        self.prospect_supporter_id = prospect_supporter_id
+
+    @discord.ui.button(label="✅ Afslut & Giv Point", style=discord.ButtonStyle.success)
+    async def complete_with_points(self, interaction: discord.Interaction, button: Button):
+        # Tjek om brugeren er admin (DEV rolle bypasser)
+        if not tjek_dev_rolle(interaction.user) and not tjek_admin_rolle(interaction.user):
+            await interaction.response.send_message("⛔ Kun admins kan afslutte permanente opgaver med point!", ephemeral=True)
+            return
+        
+        # Vis modal til at indtaste point reward
+        await interaction.response.send_modal(CompletePermanentJobModal(self.prospect_supporter_id, interaction.channel))
 
     @discord.ui.button(label="🔒 Luk Kanal", style=discord.ButtonStyle.danger)
     async def close_channel(self, interaction: discord.Interaction, button: Button):
@@ -2022,6 +2038,74 @@ class PermanentJobView(View):
         await asyncio.sleep(5)
         try:
             await interaction.channel.delete()
+        except:
+            pass
+
+class CompletePermanentJobModal(Modal):
+    def __init__(self, prospect_supporter_id, channel):
+        super().__init__(title="✅ Afslut Permanent Opgave")
+        self.prospect_supporter_id = prospect_supporter_id
+        self.channel = channel
+        
+        self.point_reward = TextInput(
+            label="Point Reward (valgfri)",
+            placeholder="Indtast antal point (lad stå tom eller 0 for ingen point)",
+            required=False,
+            max_length=10
+        )
+        
+        self.add_item(self.point_reward)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # Parse point_reward - tom eller ugyldig = 0
+        point_reward = 0
+        if self.point_reward.value.strip():
+            try:
+                point_reward = int(self.point_reward.value)
+            except ValueError:
+                await interaction.response.send_message("⛔ Ugyldig point værdi! Indtast et tal eller lad stå tom.", ephemeral=True)
+                return
+        
+        if point_reward < 0:
+            await interaction.response.send_message("⛔ Point kan ikke være negative!", ephemeral=True)
+            return
+        
+        # Giv point til prospect_supporter hvis der er nogen
+        if point_reward > 0 and self.prospect_supporter_id:
+            try:
+                conn = sqlite3.connect(DB_PATH)
+                cursor = conn.cursor()
+                
+                # Hent prospect_supporter navn fra guild
+                guild = interaction.guild
+                member = guild.get_member(self.prospect_supporter_id)
+                prospect_supporter_navn = member.display_name if member else "Ukendt"
+                
+                # Update prospect_supporter stats with points
+                cursor.execute("""
+                    INSERT OR REPLACE INTO prospect_supporter_stats (prospect_supporter_id, prospect_supporter_navn, total_points)
+                    VALUES (?, ?, COALESCE((SELECT total_points FROM prospect_supporter_stats WHERE prospect_supporter_id = ?), 0) + ?)
+                """, (self.prospect_supporter_id, prospect_supporter_navn, self.prospect_supporter_id, point_reward))
+                
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                print(f"Fejl ved tildeling af point: {e}")
+        
+        if point_reward > 0:
+            await interaction.response.send_message(f"🎉 Permanent opgave afsluttet! **{point_reward} point** tildelt. Kanalen lukkes om 10 sekunder...", ephemeral=False)
+        else:
+            await interaction.response.send_message("🎉 Permanent opgave afsluttet! Kanalen lukkes om 10 sekunder...", ephemeral=False)
+        
+        # Opdater stats kanal
+        stats_kanal = bot.get_channel(STATUS_KANAL_ID)
+        if stats_kanal:
+            await update_prospect_supporter_stats_embed(stats_kanal)
+        
+        # Slet den private kanal efter 10 sekunder
+        await asyncio.sleep(10)
+        try:
+            await self.channel.delete()
         except:
             pass
 

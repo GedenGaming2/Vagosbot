@@ -555,6 +555,7 @@ async def on_ready():
     await setup_prospect_supporter_kanal()
     await setup_opgave_oprettelse_kanal()
     await setup_prospect_supporter_stats_kanal()
+    await setup_admin_panel_kanal()
     # await setup_markbetalinger_kanal()  # Disabled
     
     # Start periodisk check som backup
@@ -822,6 +823,15 @@ class AdminControlView(View):
         view = View()
         view.add_item(RemovePermOpgaveSelect())
         await interaction.response.send_message("Vælg opgave at fjerne:", view=view, ephemeral=True)
+
+    @discord.ui.button(label="🗑️ Slet Medlem Opgave", style=discord.ButtonStyle.danger, emoji="📋")
+    async def delete_member_job(self, interaction: discord.Interaction, button: Button):
+        if not tjek_admin_rolle(interaction.user):
+            await interaction.response.send_message("⛔ Kun admins kan bruge denne funktion!", ephemeral=True)
+            return
+        
+        # Send modal til at indtaste opgave nummer
+        await interaction.response.send_modal(DeleteMemberJobModal())
 
     @discord.ui.button(label="⚠️ NULSTIL SYSTEM", style=discord.ButtonStyle.danger, emoji="🗑️")
     async def reset_system(self, interaction: discord.Interaction, button: Button):
@@ -1301,6 +1311,58 @@ async def setup_prospect_supporter_stats_kanal():
     
     # Send stats embed
     await send_prospect_supporter_stats_embed(kanal)
+
+async def setup_admin_panel_kanal():
+    """Setup admin panel kanal - sletter gamle beskeder og sender nyt kontrolpanel"""
+    kanal = bot.get_channel(ADMIN_PANEL_KANAL_ID)
+    if kanal is None:
+        print(f"⚠️ Admin panel kanal med ID {ADMIN_PANEL_KANAL_ID} ikke fundet.")
+        return
+    
+    try:
+        # Slet kun bottens beskeder i kanalen
+        async for message in kanal.history(limit=50):
+            if message.author == bot.user:
+                try:
+                    await message.delete()
+                except:
+                    pass
+        print(f"🧹 Admin panel kanal {kanal.name} er ryddet for bot beskeder.")
+    except Exception as e:
+        print(f"❌ Fejl under rydning af admin panel kanal: {e}")
+    
+    # Send admin panel embed
+    await send_admin_panel_embed(kanal)
+
+async def send_admin_panel_embed(kanal):
+    """Send admin kontrolpanel embed"""
+    embed = discord.Embed(
+        title="🔧 Red Devils Admin Kontrol Panel",
+        description="**Kontrolpanel for administratorer**",
+        color=0xFF5733
+    )
+    embed.set_thumbnail(url=LOGO_URL)
+    embed.add_field(
+        name="🔄 Permanente Opgaver",
+        value="Tilføj, rediger eller fjern permanente opgaver",
+        inline=False
+    )
+    embed.add_field(
+        name="📋 Vigtig Opgaver",
+        value="Slet medlemsopgaver og opdater kanaler",
+        inline=False
+    )
+    embed.add_field(
+        name="🔄 System Opdateringer",
+        value="Opdater stats, kanaler eller nulstil systemet",
+        inline=False
+    )
+    embed.set_footer(text="Red Devils Admin System v1.0")
+    embed.timestamp = datetime.now()
+    
+    admin_view = AdminControlView()
+    await kanal.send(embed=embed, view=admin_view)
+    print(f"✅ Admin kontrolpanel sendt til {kanal.name}")
 
 # Disabled: Markbetalinger
 # async def setup_markbetalinger_kanal():
